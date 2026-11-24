@@ -45,7 +45,7 @@ Evidence index (fetch by key): [E2] … (read_evidence #18); …
 
 ## 压缩前原文 → 压缩中如何进行 → 压缩后什么样
 
-![压缩流程](docs/assets/compaction-flow.svg)
+![压缩流程](docs/assets/compaction-flow.gif)
 
 ### 压缩前
 
@@ -133,7 +133,8 @@ lib/                              检查点渲染、nosig 抽取、证据索引�
                                   ledger 去噪、receipt 等实现
 docs/checkpoint-format.md         检查点的区块顺序、来源与 seq 约定
 docs/design-notes.md              设计取舍与未采用的方案
-docs/assets/compaction-flow.svg   压缩流程图
+docs/denoise.md                   运行时去噪的机制、触发条件与实测收益
+docs/assets/compaction-flow.gif   压缩流程图
 profiles/                         最小接线示例与完整 desktop profile
 tests/                            单元与离线契约测试
 experiments/                      prod-matrix harness、场景与过往实验记录
