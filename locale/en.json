@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "WSC Compaction",
+    "description": "WSC compaction: 80% pressure, cited ledger entries, and a checkpoint that keeps each requirement verbatim and traceable to a session seq."
+  }
+}

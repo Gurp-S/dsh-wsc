@@ -1,1 +1,0 @@
-"""WSC plugin vendor namespace."""
