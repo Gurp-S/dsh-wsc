@@ -11,6 +11,7 @@ WSC（Work State Compaction）是 DeepSeek Harness 的社区压缩后端，包�
 或者：在检查点只剩一句「测试通过」的情况下，之后无法确认它验证的是哪一版代码，模型摘要后也无法自行修正。通过 WSC 的证据入口（`read_evidence`、事件编号），可以按 #81 直接取回当时的原始命令和输出，确认它覆盖了哪些文件、哪些没有，避免把没验证过的改动当成已验证。
 
 [安装与试用](#安装与试用) · [检查点格式](docs/checkpoint-format.md) · [完整实验报告](experiments/过往实验/2026-11-24-final-benchmark/README.md)
+
 **具体的机制图：**
 
 ![WSC 从会话事件生成检查点，并按序号回查相关证据](docs/assets/compaction-flow.gif)
