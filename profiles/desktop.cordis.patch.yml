@@ -73,7 +73,7 @@
 # 1M 窗口下等价于同一比例（capacity 43%，force 0.85 -> 36.6% 触发）。
 # 回退：把 mode 改回 off 即恢复原生 compaction-basic。
 - id: wsc-config
-  name: "@xeyo/dsh-wsc"
+  name: "@gurp-s/dsh-wsc"
   config:
     mode: active
     capacityMode: ratio
@@ -109,4 +109,4 @@
 
 - insert:
     - id: wsc-engine
-      name: "@xeyo/dsh-wsc/engine"
+      name: "@gurp-s/dsh-wsc/engine"

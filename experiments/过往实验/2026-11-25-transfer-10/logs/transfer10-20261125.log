@@ -1,0 +1,224 @@
+slug-blog/v3r/rep1: round 01 ok 26s attempt 1
+csv-stock/native/rep1: round 01 ok 29s attempt 1
+csv-stock/v3r/rep1: round 01 ok 38s attempt 1
+csv-stock/native/rep1: round 02 ok 60s attempt 1
+csv-stock/v3r/rep1: round 02 ok 54s attempt 1
+slug-blog/v3r/rep1: round 02 ok 83s attempt 1
+csv-stock/native/rep1: round 03 ok 64s attempt 1
+csv-stock/v3r/rep1: round 03 ok 66s attempt 1
+slug-blog/v3r/rep1: round 03 ok 92s attempt 1
+csv-stock/native/rep1: round 04 ok 63s attempt 1
+slug-blog/v3r/rep1: round 04 ok 58s attempt 1
+csv-stock/v3r/rep1: round 04 ok 108s attempt 1
+slug-blog/v3r/rep1: round 05 ok 92s attempt 1
+csv-stock/v3r/rep1: round 05 ok 112s attempt 1
+csv-stock/native/rep1: round 05 ok 168s attempt 1
+csv-stock/native/rep1: round 06 ok 37s attempt 1
+csv-stock/v3r/rep1: round 06 ok 50s attempt 1
+slug-blog/v3r/rep1: round 06 ok 103s attempt 1
+csv-stock/v3r/rep1: round 07 ok 92s attempt 1
+slug-blog/v3r/rep1: round 07 ok 69s attempt 1
+csv-stock/native/rep1: round 07 ok 103s attempt 1
+csv-stock/v3r/rep1: round 08 ok 48s attempt 1
+csv-stock/v3r/rep1: round 09 ok 50s attempt 1
+csv-stock/native/rep1: round 08 ok 109s attempt 1
+slug-blog/v3r/rep1: round 08 ok 134s attempt 1
+csv-stock/v3r/rep1: round 10 ok 75s attempt 1
+csv-stock/native/rep1: round 09 ok 62s attempt 1
+csv-stock/v3r/rep1: round 11 ok 36s attempt 1
+csv-stock/v3r/rep1: round 12 ok 22s attempt 1
+csv-stock/v3r/rep1: round 13 ok 19s attempt 1
+csv-stock/v3r/rep1: finished session=session-12dd4f4a-66c9-41f5-a280-ec84e766e8e9
+slug-blog/v3r/rep1: round 09 ok 120s attempt 1
+slug-blog/native/rep1: round 01 ok 25s attempt 1
+csv-stock/native/rep1: round 10 ok 130s attempt 1
+slug-blog/v3r/rep1: round 10 ok 72s attempt 1
+csv-stock/native/rep1: round 11 ok 25s attempt 1
+slug-blog/native/rep1: round 02 ok 70s attempt 1
+slug-blog/v3r/rep1: round 11 ok 40s attempt 1
+slug-blog/v3r/rep1: round 12 ok 14s attempt 1
+slug-blog/v3r/rep1: finished session=session-1ae1861c-5b14-4d6e-8daa-2d79985bd099
+csv-stock/native/rep1: round 12 ok 70s attempt 1
+slug-blog/native/rep1: round 03 ok 62s attempt 1
+csv-stock/native/rep1: round 13 ok 19s attempt 1
+csv-stock/native/rep1: finished session=session-8e56c92a-9301-4c00-8fd5-244c3c6fcc7e
+matrix-ops/v3r/rep1: round 01 FAIL 35s attempt 1 :: 429: {"message":"inference exceeds tpm/rpm limit","type":"rate_limit_error","param":"","code":"RateLimitExceeded.EndpointRPMExceeded"}
+matrix-ops/native/rep1: round 01 ok 18s attempt 1
+matrix-ops/v3r/rep1: round 01 ok 27s attempt 2
+slug-blog/native/rep1: round 04 ok 86s attempt 1
+slug-blog/native/rep1: round 05 ok 47s attempt 1
+matrix-ops/v3r/rep1: round 02 ok 104s attempt 1
+matrix-ops/native/rep1: round 02 ok 154s attempt 1
+slug-blog/native/rep1: round 06 ok 76s attempt 1
+matrix-ops/native/rep1: round 03 ok 98s attempt 1
+matrix-ops/v3r/rep1: round 03 ok 115s attempt 1
+matrix-ops/native/rep1: round 04 FAIL 12s attempt 1 :: unknown option '--op'
+matrix-ops/native/rep1: stop at round 4 :: unknown option '--op'
+matrix-ops/v3r/rep1: round 04 FAIL 12s attempt 1 :: unknown option '--op'
+matrix-ops/v3r/rep1: stop at round 4 :: unknown option '--op'
+slug-blog/native/rep1: round 07 ok 94s attempt 1
+tz-slots/v3r/rep1: round 01 ok 35s attempt 1
+tz-slots/native/rep1: round 01 ok 32s attempt 1
+tz-slots/v3r/rep1: round 02 ok 59s attempt 1
+tz-slots/native/rep1: round 02 ok 74s attempt 1
+slug-blog/native/rep1: round 08 ok 155s attempt 1
+tz-slots/native/rep1: round 03 ok 78s attempt 1
+slug-blog/native/rep1: round 09 ok 80s attempt 1
+tz-slots/native/rep1: round 04 ok 71s attempt 1
+tz-slots/v3r/rep1: round 03 ok 173s attempt 1
+tz-slots/native/rep1: round 05 FAIL 11s attempt 1 :: `-` must be the only task argument
+tz-slots/native/rep1: stop at round 5 :: `-` must be the only task argument
+pw-rules/v3r/rep1: round 01 ok 22s attempt 1
+slug-blog/native/rep1: round 10 ok 76s attempt 1
+tz-slots/v3r/rep1: round 04 ok 78s attempt 1
+pw-rules/v3r/rep1: round 02 ok 47s attempt 1
+slug-blog/native/rep1: round 11 ok 33s attempt 1
+tz-slots/v3r/rep1: round 05 FAIL 12s attempt 1 :: `-` must be the only task argument
+tz-slots/v3r/rep1: stop at round 5 :: `-` must be the only task argument
+slug-blog/native/rep1: round 12 ok 19s attempt 1
+slug-blog/native/rep1: finished session=session-1717b2d9-a956-4a74-9d16-65e3175e826a
+pw-rules/native/rep1: round 01 ok 22s attempt 1
+pw-rules/v3r/rep1: round 03 ok 66s attempt 1
+json-diff/v3r/rep1: round 01 ok 37s attempt 1
+pw-rules/native/rep1: round 02 ok 63s attempt 1
+pw-rules/v3r/rep1: round 04 ok 43s attempt 1
+pw-rules/native/rep1: round 03 ok 54s attempt 1
+json-diff/v3r/rep1: round 02 ok 93s attempt 1
+pw-rules/native/rep1: round 04 ok 43s attempt 1
+json-diff/v3r/rep1: round 03 ok 56s attempt 1
+pw-rules/native/rep1: round 05 ok 52s attempt 1
+pw-rules/v3r/rep1: round 05 ok 165s attempt 1
+pw-rules/native/rep1: round 06 ok 51s attempt 1
+pw-rules/v3r/rep1: round 06 ok 52s attempt 1
+json-diff/v3r/rep1: round 04 ok 119s attempt 1
+pw-rules/native/rep1: round 07 ok 57s attempt 1
+pw-rules/v3r/rep1: round 07 ok 52s attempt 1
+pw-rules/native/rep1: round 08 ok 56s attempt 1
+pw-rules/v3r/rep1: round 08 ok 44s attempt 1
+json-diff/v3r/rep1: round 05 ok 90s attempt 1
+json-diff/v3r/rep1: round 06 ok 69s attempt 1
+pw-rules/native/rep1: round 09 ok 112s attempt 1
+json-diff/v3r/rep1: round 07 ok 74s attempt 1
+pw-rules/v3r/rep1: round 09 ok 178s attempt 1
+pw-rules/native/rep1: round 10 ok 78s attempt 1
+json-diff/v3r/rep1: round 08 ok 79s attempt 1
+pw-rules/native/rep1: round 11 ok 63s attempt 1
+pw-rules/v3r/rep1: round 10 ok 136s attempt 1
+pw-rules/native/rep1: round 12 ok 74s attempt 1
+json-diff/v3r/rep1: round 09 ok 94s attempt 1
+pw-rules/native/rep1: round 13 ok 21s attempt 1
+pw-rules/native/rep1: finished session=session-e6ff9a89-2725-4fcf-b2a0-06e120cbf43c
+json-diff/native/rep1: round 01 ok 25s attempt 1
+json-diff/v3r/rep1: round 10 ok 72s attempt 1
+pw-rules/v3r/rep1: round 11 ok 104s attempt 1
+json-diff/native/rep1: round 02 ok 83s attempt 1
+json-diff/v3r/rep1: round 11 ok 71s attempt 1
+json-diff/v3r/rep1: round 12 ok 16s attempt 1
+json-diff/v3r/rep1: finished session=session-64cc1e9a-8e6a-41a7-a2d6-bdf4ee8ec757
+flat-utils/v3r/rep1: round 01 ok 20s attempt 1
+json-diff/native/rep1: round 03 ok 55s attempt 1
+flat-utils/v3r/rep1: round 02 ok 42s attempt 1
+pw-rules/v3r/rep1: round 12 ok 149s attempt 1
+pw-rules/v3r/rep1: round 13 ok 18s attempt 1
+pw-rules/v3r/rep1: finished session=session-b12c240d-2508-47cd-880f-4d3633111bb3
+flat-utils/v3r/rep1: round 03 ok 43s attempt 1
+json-diff/native/rep1: round 04 ok 86s attempt 1
+flat-utils/native/rep1: round 01 ok 25s attempt 1
+flat-utils/v3r/rep1: round 04 ok 42s attempt 1
+flat-utils/native/rep1: round 02 ok 36s attempt 1
+json-diff/native/rep1: round 05 ok 73s attempt 1
+flat-utils/v3r/rep1: round 05 ok 46s attempt 1
+flat-utils/native/rep1: round 03 ok 50s attempt 1
+flat-utils/v3r/rep1: round 06 ok 44s attempt 1
+json-diff/native/rep1: round 06 ok 60s attempt 1
+flat-utils/native/rep1: round 04 ok 29s attempt 1
+flat-utils/native/rep1: round 05 ok 47s attempt 1
+json-diff/native/rep1: round 07 ok 53s attempt 1
+flat-utils/v3r/rep1: round 07 ok 85s attempt 1
+flat-utils/native/rep1: round 06 ok 155s attempt 1
+flat-utils/v3r/rep1: round 08 ok 130s attempt 1
+flat-utils/v3r/rep1: round 09 ok 29s attempt 1
+flat-utils/native/rep1: round 07 ok 81s attempt 1
+json-diff/native/rep1: round 08 ok 249s attempt 1
+flat-utils/v3r/rep1: round 10 ok 72s attempt 1
+flat-utils/native/rep1: round 08 ok 35s attempt 1
+flat-utils/native/rep1: round 09 ok 149s attempt 1
+flat-utils/v3r/rep1: round 11 ok 159s attempt 1
+flat-utils/v3r/rep1: round 12 ok 20s attempt 1
+flat-utils/v3r/rep1: finished session=session-73fe24b6-a523-4c3e-9495-3e686294eea8
+flat-utils/native/rep1: round 10 ok 48s attempt 1
+tiny-config/v3r/rep1: round 01 ok 32s attempt 1
+json-diff/native/rep1: round 09 ok 250s attempt 1
+flat-utils/native/rep1: round 11 ok 36s attempt 1
+tiny-config/v3r/rep1: round 02 ok 49s attempt 1
+flat-utils/native/rep1: round 12 ok 30s attempt 1
+flat-utils/native/rep1: finished session=session-9ba0f58c-ec57-476e-a1ff-4ddafdffd75e
+tiny-config/native/rep1: round 01 ok 14s attempt 1
+tiny-config/v3r/rep1: round 03 ok 40s attempt 1
+json-diff/native/rep1: round 10 ok 105s attempt 1
+tiny-config/native/rep1: round 02 ok 54s attempt 1
+tiny-config/v3r/rep1: round 04 ok 48s attempt 1
+tiny-config/native/rep1: round 03 ok 47s attempt 1
+tiny-config/v3r/rep1: round 05 ok 47s attempt 1
+tiny-config/v3r/rep1: round 06 ok 15s attempt 1
+tiny-config/v3r/rep1: finished session=session-5da97ef6-1d4a-45d4-860c-5bf18e97028f
+log-noisy/v3r/rep1: round 01 ok 31s attempt 1
+tiny-config/native/rep1: round 04 ok 59s attempt 1
+json-diff/native/rep1: round 11 ok 116s attempt 1
+json-diff/native/rep1: round 12 ok 33s attempt 1
+json-diff/native/rep1: finished session=session-12cd0fb6-3b57-484d-92bd-6b240ec6a53a
+tiny-config/native/rep1: round 05 ok 60s attempt 1
+log-noisy/native/rep1: round 01 ok 31s attempt 1
+tiny-config/native/rep1: round 06 ok 17s attempt 1
+tiny-config/native/rep1: finished session=session-6470e32d-c8d0-44fc-8f6a-c2d05876f65d
+vague-spec/v3r/rep1: round 01 ok 23s attempt 1
+log-noisy/v3r/rep1: round 02 ok 135s attempt 1
+vague-spec/v3r/rep1: round 02 ok 64s attempt 1
+log-noisy/native/rep1: round 02 ok 122s attempt 1
+vague-spec/v3r/rep1: round 03 ok 40s attempt 1
+vague-spec/v3r/rep1: round 04 ok 34s attempt 1
+log-noisy/v3r/rep1: round 03 ok 126s attempt 1
+log-noisy/native/rep1: round 03 ok 68s attempt 1
+vague-spec/v3r/rep1: round 05 ok 38s attempt 1
+log-noisy/native/rep1: round 04 ok 63s attempt 1
+vague-spec/v3r/rep1: round 06 ok 62s attempt 1
+vague-spec/v3r/rep1: round 07 ok 26s attempt 1
+vague-spec/v3r/rep1: round 08 ok 28s attempt 1
+log-noisy/native/rep1: round 05 ok 78s attempt 1
+log-noisy/v3r/rep1: round 04 ok 150s attempt 1
+vague-spec/v3r/rep1: round 09 ok 87s attempt 1
+log-noisy/native/rep1: round 06 ok 105s attempt 1
+vague-spec/v3r/rep1: round 10 ok 30s attempt 1
+log-noisy/v3r/rep1: round 05 ok 137s attempt 1
+vague-spec/v3r/rep1: round 11 ok 72s attempt 1
+vague-spec/v3r/rep1: round 12 ok 15s attempt 1
+vague-spec/v3r/rep1: finished session=session-680f3410-99a4-41d1-8565-f22401c16260
+log-noisy/v3r/rep1: round 06 ok 65s attempt 1
+vague-spec/native/rep1: round 01 ok 20s attempt 1
+vague-spec/native/rep1: round 02 ok 58s attempt 1
+log-noisy/native/rep1: round 07 ok 173s attempt 1
+vague-spec/native/rep1: round 03 ok 33s attempt 1
+vague-spec/native/rep1: round 04 ok 32s attempt 1
+log-noisy/native/rep1: round 08 ok 105s attempt 1
+vague-spec/native/rep1: round 05 ok 52s attempt 1
+vague-spec/native/rep1: round 06 ok 31s attempt 1
+log-noisy/native/rep1: round 09 ok 46s attempt 1
+vague-spec/native/rep1: round 07 ok 35s attempt 1
+log-noisy/v3r/rep1: round 07 ok 289s attempt 1
+log-noisy/native/rep1: round 10 ok 67s attempt 1
+vague-spec/native/rep1: round 08 ok 63s attempt 1
+log-noisy/native/rep1: round 11 ok 40s attempt 1
+log-noisy/native/rep1: round 12 ok 19s attempt 1
+log-noisy/native/rep1: finished session=session-653b6313-7cc5-45e0-863e-c8e77a8685d3
+log-noisy/v3r/rep1: round 08 ok 63s attempt 1
+log-noisy/v3r/rep1: round 09 ok 42s attempt 1
+vague-spec/native/rep1: round 09 ok 134s attempt 1
+vague-spec/native/rep1: round 10 ok 18s attempt 1
+log-noisy/v3r/rep1: round 10 ok 105s attempt 1
+log-noisy/v3r/rep1: round 11 ok 19s attempt 1
+vague-spec/native/rep1: round 11 ok 59s attempt 1
+log-noisy/v3r/rep1: round 12 ok 14s attempt 1
+log-noisy/v3r/rep1: finished session=session-f3e45e89-dda9-42ce-96ec-d5b37c4d2d29
+vague-spec/native/rep1: round 12 ok 15s attempt 1
+vague-spec/native/rep1: finished session=session-a26ec156-4a3f-48a9-8a32-5a66bea48a17
+matrix finished in 4657s; rows=16

@@ -11,6 +11,7 @@
 | [2026-11-23-denoise-v2](2026-11-23-denoise-v2/) | ledger 去噪 + R1–R3 | 成为 v3 基线 |
 | [2026-11-24-v3-matrix](2026-11-24-v3-matrix/) | v3i/v3x/v3r/v3b/v4q | v3r 成为默认；v4q 负结果 |
 | [2026-11-24-final-benchmark](2026-11-24-final-benchmark/) | 四臂各 8+4 次 | v3r > v2f > w80 > native |
+| [2026-11-25-transfer-10](2026-11-25-transfer-10/) | 十组不同任务各 1 次，含 4 个不利场景 | 7/10 更低，总成本 −12%；行为持平 |
 
 旧臂的引擎代码版本也不同：这里的 `configs/` 只能复现旋钮，不能复现代码；需要精确复跑时请用对应日期的提交。
 原始 run 数据（workspace、session 快照，约 116 MB）留在实验室目录，不入仓库；

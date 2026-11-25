@@ -6,7 +6,7 @@
 # the web bundle.
 - insert:
     - id: wsc-config
-      name: '@xeyo/dsh-wsc'
+      name: '@gurp-s/dsh-wsc'
 
 - id: preset-cordis
   name: '@deepseek-ai/dsh-agent-preset'
@@ -74,7 +74,7 @@
           toolResultPruner: true
         config:
           - id: wsc-engine
-            name: '@xeyo/dsh-wsc/engine'
+            name: '@gurp-s/dsh-wsc/engine'
           - id: command-compact
             name: '@deepseek-ai/dsh-command-compact'
           - id: tool-result-pruner

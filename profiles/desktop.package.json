@@ -6,11 +6,11 @@
       "bundles": [
         "@deepseek-ai/dsh-base",
         "@deepseek-ai/dsh-web-app",
-        "@xeyo/dsh-wsc"
+        "@gurp-s/dsh-wsc"
       ]
     }
   },
   "dependencies": {
-    "@xeyo/dsh-wsc": "link:.."
+    "@gurp-s/dsh-wsc": "link:.."
   }
 }

@@ -1,9 +1,28 @@
 {
-  "name": "@xeyo/dsh-wsc",
+  "name": "@gurp-s/dsh-wsc",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "description": "WSC compaction for DeepSeek Harness: model-owned 80/85 pressure, provenance-preserving checkpoints, optional view-level denoise.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Gurp-S/dsh-wsc.git"
+  },
+  "homepage": "https://github.com/Gurp-S/dsh-wsc",
+  "bugs": {
+    "url": "https://github.com/Gurp-S/dsh-wsc/issues"
+  },
+  "keywords": [
+    "deepseek",
+    "dsh",
+    "compaction",
+    "context",
+    "agent",
+    "wsc"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "exports": {
     ".": "./index.js",
     "./engine": "./engine.js",

@@ -1,0 +1,80 @@
+matrix-ops/v3r/rep1: round 01 ok 34s attempt 1
+tz-slots/v3r/rep1: round 01 ok 41s attempt 1
+matrix-ops/native/rep1: round 01 ok 45s attempt 1
+tz-slots/v3r/rep1: round 02 ok 85s attempt 1
+matrix-ops/v3r/rep1: round 02 ok 126s attempt 1
+matrix-ops/native/rep1: round 02 ok 126s attempt 1
+tz-slots/v3r/rep1: round 03 ok 54s attempt 1
+matrix-ops/native/rep1: round 03 ok 78s attempt 1
+matrix-ops/v3r/rep1: round 03 ok 116s attempt 1
+tz-slots/v3r/rep1: round 04 ok 99s attempt 1
+matrix-ops/native/rep1: round 04 ok 102s attempt 1
+tz-slots/v3r/rep1: round 05 ok 75s attempt 1
+matrix-ops/v3r/rep1: round 04 ok 97s attempt 1
+matrix-ops/native/rep1: round 05 ok 51s attempt 1
+matrix-ops/v3r/rep1: round 05 ok 57s attempt 1
+tz-slots/v3r/rep1: round 06 ok 110s attempt 1
+matrix-ops/v3r/rep1: round 06 ok 38s attempt 1
+matrix-ops/native/rep1: round 06 ok 68s attempt 1
+matrix-ops/native/rep1: round 07 ok 53s attempt 1
+matrix-ops/v3r/rep1: round 07 ok 56s attempt 1
+tz-slots/v3r/rep1: round 07 ok 146s attempt 1
+matrix-ops/v3r/rep1: round 08 ok 160s attempt 1
+matrix-ops/native/rep1: round 08 ok 194s attempt 1
+matrix-ops/v3r/rep1: round 09 ok 71s attempt 1
+matrix-ops/v3r/rep1: round 10 ok 28s attempt 1
+matrix-ops/native/rep1: round 09 ok 101s attempt 1
+matrix-ops/v3r/rep1: round 11 ok 42s attempt 1
+matrix-ops/v3r/rep1: round 12 ok 14s attempt 1
+matrix-ops/v3r/rep1: finished session=session-03ddb002-d23e-46dd-96b5-5b00004795cb
+matrix-ops/native/rep1: round 10 ok 31s attempt 1
+tz-slots/v3r/rep1: round 08 ok 256s attempt 1
+tz-slots/native/rep1: round 01 ok 25s attempt 1
+matrix-ops/native/rep1: round 11 ok 45s attempt 1
+matrix-ops/native/rep1: round 12 ok 13s attempt 1
+matrix-ops/native/rep1: finished session=session-5744b403-e835-45d0-9707-aa017c3779a3
+tz-slots/v3r/rep1: round 09 FAIL 59s attempt 1 :: 429: {"message":"inference exceeds tpm/rpm limit","type":"rate_limit_error","param":"","code":"RateLimitExceeded.EndpointRPMExceeded"}
+flat-utils/v3r/rep1: round 01 ok 23s attempt 1
+flat-utils/v3r/rep1: round 02 ok 31s attempt 1
+flat-utils/v3r/rep1: round 03 ok 26s attempt 1
+tz-slots/native/rep1: round 02 ok 125s attempt 1
+flat-utils/v3r/rep1: round 04 ok 31s attempt 1
+tz-slots/v3r/rep1: round 09 ok 82s attempt 2
+flat-utils/v3r/rep1: round 05 ok 30s attempt 1
+tz-slots/native/rep1: round 03 ok 111s attempt 1
+tz-slots/v3r/rep1: round 10 ok 92s attempt 1
+tz-slots/native/rep1: round 04 ok 42s attempt 1
+flat-utils/v3r/rep1: round 06 ok 110s attempt 1
+tz-slots/v3r/rep1: round 11 ok 47s attempt 1
+tz-slots/v3r/rep1: round 12 ok 15s attempt 1
+tz-slots/v3r/rep1: finished session=session-45240462-3dfb-4cf5-a733-b585c9f21a31
+flat-utils/v3r/rep1: round 07 ok 42s attempt 1
+tz-slots/native/rep1: round 05 ok 78s attempt 1
+flat-utils/native/rep1: round 01 ok 32s attempt 1
+flat-utils/v3r/rep1: round 08 ok 41s attempt 1
+flat-utils/native/rep1: round 02 ok 61s attempt 1
+flat-utils/v3r/rep1: round 09 ok 49s attempt 1
+tz-slots/native/rep1: round 06 ok 82s attempt 1
+flat-utils/native/rep1: round 03 ok 48s attempt 1
+tz-slots/native/rep1: round 07 ok 41s attempt 1
+flat-utils/v3r/rep1: round 10 ok 60s attempt 1
+flat-utils/native/rep1: round 04 ok 39s attempt 1
+tz-slots/native/rep1: round 08 ok 64s attempt 1
+flat-utils/v3r/rep1: round 11 ok 60s attempt 1
+flat-utils/native/rep1: round 05 ok 48s attempt 1
+flat-utils/v3r/rep1: round 12 ok 24s attempt 1
+flat-utils/v3r/rep1: finished session=session-601f5880-3aec-435f-b82c-1b38ce9820e5
+tz-slots/native/rep1: round 09 ok 48s attempt 1
+flat-utils/native/rep1: round 06 ok 46s attempt 1
+flat-utils/native/rep1: round 07 ok 36s attempt 1
+tz-slots/native/rep1: round 10 ok 60s attempt 1
+tz-slots/native/rep1: round 11 ok 17s attempt 1
+flat-utils/native/rep1: round 08 ok 47s attempt 1
+tz-slots/native/rep1: round 12 ok 20s attempt 1
+tz-slots/native/rep1: finished session=session-5122af13-a920-49ef-ab70-0618798a3f78
+flat-utils/native/rep1: round 09 ok 76s attempt 1
+flat-utils/native/rep1: round 10 ok 39s attempt 1
+flat-utils/native/rep1: round 11 ok 48s attempt 1
+flat-utils/native/rep1: round 12 ok 14s attempt 1
+flat-utils/native/rep1: finished session=session-daf0011e-780d-4060-b9a6-b555c8bd9e68
+matrix finished in 1744s; rows=6

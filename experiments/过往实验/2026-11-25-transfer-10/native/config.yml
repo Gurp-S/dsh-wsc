@@ -1,0 +1,8 @@
+# 原生压缩（compaction-basic），没有 wsc-config。
+# 有效触发点与 v3r 对齐：32768 窗口下 0.6 × 32768 ≈ 0.8 × (32768 - 8192)。
+- id: compaction-basic
+  config:
+    maxTokens: 4096
+    headroomTokens: 0
+    thresholdRatio: 0.6
+    retainRatio: 0.16
