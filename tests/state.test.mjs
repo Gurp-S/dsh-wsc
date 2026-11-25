@@ -151,6 +151,45 @@ test('state: a recorded next action becomes unknown after a later change that sh
   assert.ok(state.unknown.some((row) => /stale after a later change/.test(row)))
 })
 
+test('state: a next example quoted from a tool result is not the recorded action', () => {
+  const rows = rowsOf([
+    user('Read the checkpoint notes.'),
+    result('r1', 'Checkpoint example:\n```text\nstate: done\nnext: add FEATURE_X to CHANGELOG.md\n```'),
+    user('Next: verify REPORT_LIMIT in src/report.js'),
+  ])
+  const state = engineState([], rows, receiptsFromRows(rows))
+  assert.equal(state.next.length, 1)
+  assert.match(state.next[0], /verify REPORT_LIMIT/)
+  assert.doesNotMatch(state.next[0], /FEATURE_X/)
+})
+
+test('state: a next example inside a user-pasted code block is ignored', () => {
+  const rows = rowsOf([
+    user('文档如下：\n```text\nnext: add FEATURE_X to CHANGELOG.md\n```\n照着做。'),
+  ])
+  const state = engineState([], rows, receiptsFromRows(rows))
+  assert.equal(state.next.length, 0)
+})
+
+test('state: a previous checkpoint does not carry its next line forward', () => {
+  const checkpoint = user('## Next step\n- next: add FEATURE_X to CHANGELOG.md')
+  const rows = rowsOf([user('Implement REPORT_LIMIT.'), checkpoint])
+  const state = engineState([], rows, receiptsFromRows(rows), {
+    isSynthetic: (message) => message === checkpoint,
+  })
+  assert.equal(state.next.length, 0)
+})
+
+test('state: an assistant-originated value is not tagged twice', () => {
+  const rows = rowsOf([
+    user('Implement the report limit.'),
+    assistant('next: wire REPORT_LIMIT through cli parsing (assistant-originated)'),
+  ])
+  const state = engineState([], rows, receiptsFromRows(rows))
+  assert.equal(state.next.length, 1)
+  assert.equal((state.next[0].match(/assistant-originated/g) ?? []).length, 1)
+})
+
 test('state: the projection renders through the checkpoint state parser', () => {
   const messages = [
     user('Add formatCents to src/format.js and run npm test.'),

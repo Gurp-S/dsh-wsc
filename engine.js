@@ -1,6 +1,7 @@
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { join } from 'node:path'
+import { resolveHome } from './lib/home.js'
 import { loadDshPackage } from './lib/resolve.js'
 import { adjust, decide, usedPercent } from './lib/timing.js'
 import { selectCompactableRange } from './lib/range.js'
@@ -319,8 +320,7 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
    * and a missing journal simply presents no working state.
    */
   #ledgerState(session) {
-    const home = process.env.DSH_HOME
-    if (home === undefined || home === '') return null
+    const home = resolveHome()
     try {
       const store = new UnderstandingStore({ file: join(home, 'wsc', 'understanding', `${session.id}.jsonl`) })
       const records = store.all()
@@ -343,6 +343,7 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
 
   #install() {
     const ctx = this.ctx
+    ctx.logger.info(`wsc home: ${resolveHome()}${process.env.DSH_HOME ? '' : ' (DSH_HOME unset)'}`)
 
     // The engine lives in the preset's isolated compaction group, whose scope is
     // a child of the agent. A tool registered here would be invisible to the
@@ -381,8 +382,7 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
       if (event.type !== 'compaction/summary') return
       resetDenoiseState(this.denoiseState.get(session.id))
       try {
-        const home = process.env.DSH_HOME
-        if (home === undefined || home === '') return
+        const home = resolveHome()
         const dir = join(home, 'wsc')
         mkdirSync(dir, { recursive: true })
         const data = event.data
@@ -817,7 +817,7 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
         const session = exec.agent.session
         const seq = Number(args?.seq)
         if (!Number.isInteger(seq)) throw new Error('read_evidence requires an integer seq')
-        const index = loadEvidence(process.env.DSH_HOME, session.id)
+        const index = loadEvidence(resolveHome(), session.id)
         const { store, access } = sessionStore(session, index, fullText)
         const result = readEvidence(store, access, seq, { offset: args?.offset, limit: args?.limit })
         return {
@@ -870,10 +870,10 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
    * @param {object} agent owner of the session being compacted.
    */
   #recordReady(checkpoint, agent) {
-    const home = process.env.DSH_HOME
+    const home = resolveHome()
     const sessionId = agent?.session?.id
     const blocks = checkpoint?.summary
-    if (typeof home !== 'string' || home === '' || typeof sessionId !== 'string') return
+    if (typeof sessionId !== 'string') return
     if (!Array.isArray(blocks) || blocks.length === 0) return
     const events = sessionEvents(agent.session)
     const throughSeq = events.length === 0 ? 0 : events[events.length - 1].seq
@@ -924,10 +924,9 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
     const header = agent.session.requestHeader()?.config
     const provider = header?.provider ?? agent.options?.provider
     const model = header?.model ?? agent.options?.model
-    const home = typeof process.env.DSH_HOME === 'string' && process.env.DSH_HOME !== ''
-      ? process.env.DSH_HOME : ''
+    const home = resolveHome()
     const journal = new LedgerJournal(
-      home === '' ? null : join(home, 'wsc', 'nosig', `${safeSessionId(agent.session.id)}.jsonl`),
+      join(home, 'wsc', 'nosig', `${safeSessionId(agent.session.id)}.jsonl`),
     ).load()
 
     const telemetry = { segments: 0, accepted: 0, rejected: 0, gaps: 0, mode: settings.nosigVerification }
@@ -942,12 +941,31 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
       const singlePass = byteLength(numberedSegment(messages).text) <= NOSIG_SINGLE_MAX_BYTES
       const segments = singlePass ? [messages] : segmentMessages(messages, { maxBytes: settings.nosigSegmentBytes })
       const run = singlePass ? runExtractionOnce : runExtraction
+      // Backoff is spent inside the compaction pre-step, so it shares the
+      // caller's cancellation and stays inside one bounded budget.
+      const wait = (ms) => new Promise((resolve, reject) => {
+        if (signal?.aborted === true) {
+          reject(new Error('wsc nosig request aborted'))
+          return
+        }
+        let timer
+        const onAbort = () => {
+          clearTimeout(timer)
+          reject(new Error('wsc nosig request aborted'))
+        }
+        timer = setTimeout(() => {
+          signal?.removeEventListener('abort', onAbort)
+          resolve()
+        }, ms)
+        signal?.addEventListener('abort', onAbort, { once: true })
+      })
       const extraction = await run(singlePass ? messages : segments, journal, {
         mode: settings.nosigVerification,
         entries: settings.nosigEntryCap,
         revisions: settings.nosigRevisionCap,
         delta: settings.extractDelta === true,
-        callModel: async (numbered, prior, instruction) => {
+        wait,
+        callModel: async (numbered, prior, instruction, budget) => {
           if (signal?.aborted === true) throw new Error('wsc nosig request aborted')
           const assembler = new BlockAssembler()
           try {
@@ -962,7 +980,7 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
                   { type: 'text', text: instruction },
                 ],
               }],
-              maxTokens: settings.nosigMaxTokens,
+              maxTokens: budget?.maxTokens ?? settings.nosigMaxTokens,
               sessionId: agent.session.id,
               purpose: 'compaction',
               ...(settings.nosigReasoningEffort
@@ -972,14 +990,22 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
             })) assembler.push(chunk)
           } catch (error) {
             if (signal?.aborted === true) throw error
-            throw new Error('wsc nosig request failed')
+            const detail = error instanceof Error ? error.message : String(error ?? '')
+            const failed = new Error(`wsc nosig request failed`
+              + `${detail ? `: ${detail.slice(0, 160)}` : ''}`, { cause: error })
+            failed.retryable = !/abort|cancel/i.test(detail)
+            throw failed
           }
           if (assembler.finish?.kind !== 'stop') {
             const finish = assembler.finish?.kind ?? 'unknown'
-            const detail = assembler.finish?.failure?.message
-              ?? assembler.finish?.error?.message ?? ''
-            throw new Error(`wsc nosig extraction did not finish (${finish}`
+            const failure = assembler.finish?.failure
+            const detail = failure?.message ?? assembler.finish?.error?.message ?? ''
+            const failed = new Error(`wsc nosig extraction did not finish (${finish}`
               + `${detail ? `: ${String(detail).slice(0, 120)}` : ''})`)
+            // The provider's own rate-limit/server codes are retryable; an
+            // aborted request is not.
+            failed.retryable = !/abort|cancel/i.test(`${failure?.code ?? ''} ${detail}`)
+            throw failed
           }
           extractionUsage.calls += 1
           for (const key of ['inputTokens', 'outputTokens', 'cacheReadTokens']) {
@@ -1001,10 +1027,20 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
       // Which literal check failed, so a repeated rejection is a diagnosis,
       // not a count.
       telemetry.reasons = extraction.reasons ?? {}
+      telemetry.attempted = extraction.attempted ?? 0
+      telemetry.usable = extraction.usable ?? 0
+      telemetry.retried = extraction.retried ?? 0
+      telemetry.failed = extraction.failed ?? 0
       telemetry.usage = extractionUsage
       // Extraction is a separate model call per compaction; the session usage
       // does not include it. Persist it so a cost audit can sum both sides.
       journal.append({ op: 'usage', usage: { ...extractionUsage }, segments: extraction.segments })
+      // No segment produced even a JSON object: the ledger would be empty and
+      // the checkpoint would only advertise gaps. Throwing makes the dsh
+      // pre-step skip this compaction and keep the history instead.
+      if (extraction.attempted > 0 && extraction.usable === 0) {
+        throw new Error(`wsc nosig extraction unavailable (${extraction.failed} segment(s) failed); compaction declined`)
+      }
       gaps.push(...extraction.gaps)
     }
 
@@ -1155,7 +1191,7 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
         `${telemetry.segments} segments, ${telemetry.accepted} entries, ` +
         `${telemetry.rejected} rejected, ${telemetry.recovered} re-cited, ` +
         `${telemetry.converted} ref-converted, ` +
-        `${telemetry.gaps} gaps (${telemetry.mode})`,
+        `${telemetry.gaps} gaps, ${telemetry.retried ?? 0} retries (${telemetry.mode})`,
     )
     return {
       summary: [{ type: 'text', text }],

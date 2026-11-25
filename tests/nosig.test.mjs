@@ -324,7 +324,7 @@ test('nosig: a second non-JSON reply becomes a gap, not a journal write', async 
   })
   assert.equal(result.segments, 0)
   assert.equal(result.accepted, 0)
-  assert.match(result.gaps[0], /no JSON object after retry/)
+  assert.match(result.gaps[0], /no JSON object/)
   assert.equal(journal.entries().length, 0)
 })
 
@@ -376,12 +376,13 @@ test('nosig: extraction pass persists accepted entries and reports gaps', async 
   const calls = []
   const result = await runExtraction(segments, journal, {
     mode: 'literal',
+    wait: async () => {},
     callModel: async (numbered) => {
       calls.push(numbered.text)
       return answers[calls.length - 1]
     },
   })
-  assert.equal(calls.length, 2)
+  assert.equal(calls.length, 4)
   assert.equal(result.segments, 1)
   assert.equal(result.accepted, 1)
   assert.equal(result.gaps.length, 1)
@@ -401,5 +402,113 @@ test('nosig: a rejected segment is disclosed, not written to the journal', async
   assert.equal(result.accepted, 0)
   assert.equal(result.rejected, 1)
   assert.equal(journal.entries().length, 0)
-  assert.match(result.gaps[0], /all entries rejected/)
+  assert.match(result.gaps[0], /all \d+ entries rejected/)
+})
+
+test('nosig: a rate-limited request is retried with a smaller output budget', async () => {
+  const { runExtractionOnce } = await import('../lib/nosig.js')
+  const journal = new LedgerJournal(null)
+  const prompts = []
+  const budgets = []
+  const waits = []
+  const result = await runExtractionOnce([message('user', 'append REL-9482 to docs/relnotes.md')], journal, {
+    mode: 'literal',
+    wait: async (ms) => { waits.push(ms) },
+    callModel: async (numbered, prior, instruction, budget) => {
+      prompts.push(instruction)
+      budgets.push(budget?.maxTokens)
+      if (prompts.length === 1) {
+        const error = new Error('wsc nosig extraction did not finish (error: 429 rate limited)')
+        error.retryable = true
+        throw error
+      }
+      return JSON.stringify({
+        entries: [{ kind: 'decision', text: 'append REL-9482 to docs/relnotes.md', cites: [1] }],
+      })
+    },
+  })
+  assert.equal(prompts.length, 2)
+  assert.equal(budgets[0], undefined)
+  assert.equal(budgets[1], 4096)
+  assert.match(prompts[1], /At most 3 entries and 1 revisions/)
+  assert.equal(waits.length, 1)
+  assert.ok(waits[0] >= 1800 && waits[0] <= 2200)
+  assert.equal(result.usable, 1)
+  assert.equal(result.retried, 1)
+  assert.equal(result.gaps.length, 0)
+  assert.equal(result.accepted, 1)
+})
+
+test('nosig: pass two retries a failed segment after the later segments are done', async () => {
+  const { runExtraction } = await import('../lib/nosig.js')
+  const journal = new LedgerJournal(null)
+  const segments = [
+    [message('user', 'append AAA-1111 to docs/a.md')],
+    [message('user', 'append BBB-2222 to docs/b.md')],
+    [message('user', 'append CCC-3333 to docs/c.md')],
+  ]
+  const calls = []
+  const result = await runExtraction(segments, journal, {
+    mode: 'literal',
+    wait: async () => {},
+    callModel: async (numbered) => {
+      calls.push(numbered.text)
+      const failedBefore = calls.filter((row) => row.includes('BBB-2222')).length
+      if (numbered.text.includes('BBB-2222') && failedBefore === 1) {
+        const error = new Error('wsc nosig extraction did not finish (error: 429 rate limited)')
+        error.retryable = true
+        throw error
+      }
+      const anchor = ['AAA-1111', 'BBB-2222', 'CCC-3333'].find((value) => numbered.text.includes(value))
+      const path = { 'AAA-1111': 'docs/a.md', 'BBB-2222': 'docs/b.md', 'CCC-3333': 'docs/c.md' }[anchor]
+      return JSON.stringify({
+        entries: [{ kind: 'decision', text: `append ${anchor} to ${path}`, cites: [1] }],
+      })
+    },
+  })
+  assert.equal(calls.length, 4)
+  assert.ok(calls[3].includes('BBB-2222'), 'the retry runs after the later segments')
+  assert.equal(result.retried, 1)
+  assert.equal(result.gaps.length, 0)
+  assert.equal(result.accepted, 3)
+  assert.deepEqual(
+    activeEntries(journal.ledger).map((entry) => entry.text.match(/[ABC]{3}-\d{4}/)[0]),
+    ['AAA-1111', 'BBB-2222', 'CCC-3333'],
+  )
+  assert.deepEqual(journal.entries().map((entry) => entry.segment).sort(), ['n1', 'n2', 'n3'])
+})
+
+test('nosig: no usable segment is reported for the engine to decline', async () => {
+  const { runExtraction } = await import('../lib/nosig.js')
+  const journal = new LedgerJournal(null)
+  const result = await runExtraction([[message('user', 'a')], [message('user', 'b')]], journal, {
+    wait: async () => {},
+    callModel: async () => {
+      const error = new Error('429 rate limited')
+      error.retryable = true
+      throw error
+    },
+  })
+  assert.equal(result.attempted, 6)
+  assert.equal(result.usable, 0)
+  assert.equal(result.failed, 2)
+  assert.equal(result.gaps.length, 2)
+  assert.equal(journal.entries().length, 0)
+})
+
+test('nosig: an aborted request is not retried', async () => {
+  const { runExtractionOnce } = await import('../lib/nosig.js')
+  const calls = []
+  const result = await runExtractionOnce([message('user', 'note')], new LedgerJournal(null), {
+    wait: async () => { throw new Error('should not wait') },
+    callModel: async () => {
+      calls.push(1)
+      const error = new Error('wsc nosig request aborted')
+      error.retryable = false
+      throw error
+    },
+  })
+  assert.equal(calls.length, 1)
+  assert.equal(result.retried, 0)
+  assert.match(result.gaps[0], /aborted/)
 })
