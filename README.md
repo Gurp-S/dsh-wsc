@@ -63,7 +63,14 @@ WSC 在库存 CSV（−49%）、短配置（−50%）、JSON diff（−39%）上
 
 ## 安装与试用
 
-在已有 DeepSeek Harness 的环境中，把插件链接到所用配置目录下的 `node_modules/@gurp-s/dsh-wsc`。Windows 可用目录联接（junction），也可以在该配置目录执行 `npm install @gurp-s/dsh-wsc` 代替目录联接。把以下内容加到所用的 `cordis` 预设配置中，启用 WSC 并停用原生压缩。 [最小配置](https://github.com/Gurp-S/dsh-wsc/blob/main/profiles/default.cordis.patch.yml) · [Desktop 配置示例](https://github.com/Gurp-S/dsh-wsc/blob/main/profiles/README.md)
+WSC 已发布到 npm：@gurp-s/dsh-wsc。在已有 DeepSeek Harness 的环境中，进入 DSH 使用的配置目录（包含 package.json 与 node_modules 的 profile 目录，例如 ~/.dsh/profiles/desktop），执行：
+
+```bash
+ npm install @gurp-s/dsh-wsc
+```
+
+如果该目录由 pnpm 管理，改用 pnpm add @gurp-s/dsh-wsc。开发时也可以不装 npm 包，改为把本仓库链接到 node_modules/@gurp-s/dsh-wsc（Windows 可用目录联接 junction）。
+然后把以下内容加到该配置目录的 cordis 预设补丁中，启用 WSC 并停用原生压缩。安装或改动配置后重启 DSH。 [最小配置](https://github.com/Gurp-S/dsh-wsc/blob/main/profiles/default.cordis.patch.yml) · [Desktop 配置示例](https://github.com/Gurp-S/dsh-wsc/blob/main/profiles/README.md)
 
 ```yaml
 - id: wsc-config
