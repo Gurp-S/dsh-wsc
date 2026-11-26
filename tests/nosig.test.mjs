@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -265,6 +265,47 @@ test('nosig: receipts persist by edit seq and keep the later check', () => {
   }
 })
 
+test('nosig: an unreadable journal degrades to an empty ledger instead of throwing', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'wsc-nosig-'))
+  try {
+    const file = join(directory, 'session.jsonl')
+    // A directory where the journal file should be: exists, cannot be read.
+    mkdirSync(file)
+    const journal = new LedgerJournal(file).load()
+    assert.equal(journal.storage.readFailed, true)
+    assert.notEqual(journal.storage.error, '')
+    assert.equal(journal.entries().length, 0)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('nosig: an unwritable journal keeps extraction results in memory', async () => {
+  const { runExtractionOnce } = await import('../lib/nosig.js')
+  const directory = mkdtempSync(join(tmpdir(), 'wsc-nosig-'))
+  try {
+    const blocker = join(directory, 'blocker')
+    writeFileSync(blocker, 'x')
+    const journal = new LedgerJournal(join(blocker, 'session.jsonl'))
+    const result = await runExtractionOnce(
+      [message('user', 'append REL-9482 to docs/relnotes.md')],
+      journal,
+      {
+        mode: 'literal',
+        callModel: async () => JSON.stringify({
+          entries: [{ kind: 'decision', text: 'append REL-9482 to docs/relnotes.md', cites: [1] }],
+        }),
+      },
+    )
+    assert.equal(result.accepted, 1)
+    assert.equal(journal.storage.writeFailed, true)
+    assert.notEqual(journal.storage.error, '')
+    assert.equal(journal.entries().length, 1)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 test('nosig: the instruction carries the configured caps', () => {
   assert.match(extInstruction({ entries: 7, revisions: 2 }), /At most 7 entries and 2 revisions/)
 })
@@ -516,6 +557,39 @@ test('nosig: no usable segment is reported for the engine to decline', async () 
   assert.equal(result.failed, 2)
   assert.equal(result.gaps.length, 2)
   assert.equal(journal.entries().length, 0)
+})
+
+test('nosig: a context-length failure is permanent, not retried', async () => {
+  const { runExtractionOnce } = await import('../lib/nosig.js')
+  const calls = []
+  const waits = []
+  const result = await runExtractionOnce([message('user', 'note')], new LedgerJournal(null), {
+    wait: async (ms) => { waits.push(ms) },
+    callModel: async () => {
+      calls.push(1)
+      throw new Error('maximum context length is 128000 tokens; request had 131072')
+    },
+  })
+  assert.equal(calls.length, 1)
+  assert.equal(waits.length, 0)
+  assert.equal(result.usable, 0)
+  assert.equal(result.failed, 1)
+  assert.match(result.gaps[0], /context length/)
+})
+
+test('nosig: a content-filter failure is permanent, not retried', async () => {
+  const { runExtractionOnce } = await import('../lib/nosig.js')
+  const calls = []
+  const result = await runExtractionOnce([message('user', 'note')], new LedgerJournal(null), {
+    wait: async () => { throw new Error('should not wait') },
+    callModel: async () => {
+      calls.push(1)
+      throw new Error('content_filter rejected this request')
+    },
+  })
+  assert.equal(calls.length, 1)
+  assert.equal(result.retried, 0)
+  assert.equal(result.failed, 1)
 })
 
 test('nosig: an aborted request is not retried', async () => {

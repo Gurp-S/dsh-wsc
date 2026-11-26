@@ -49,6 +49,7 @@ import { checkpointBudget } from './lib/checkpoint-budget.js'
 import {
   LedgerJournal, runExtraction, runExtractionOnce, segmentMessages, numberedSegment,
 } from './lib/nosig.js'
+import { Cooldown } from './lib/cooldown.js'
 
 const { BasicCompactionEngine } = await loadDshPackage('@deepseek-ai/dsh-compaction-basic')
 const { toolPairingBalancedBefore, isCompactCheckpointSource } = await loadDshPackage('@deepseek-ai/dsh-compaction')
@@ -56,6 +57,31 @@ const { BlockAssembler, createUserMessage } = await loadDshPackage('@deepseek-ai
 
 const TOOL_NAME = 'compact_context'
 const MAX_SELECTION_TOKENS = 4096
+// After a failed automatic compaction, automatic retries wait this long. A
+// manual compact_context request is never held back.
+const DECLINE_COOLDOWN_MS = 60_000
+
+// A retry only helps when the same request can succeed a moment later. These
+// provider outcomes cannot: they need a different request or configuration.
+const PERMANENT_FINISH_CODES = new Set([
+  'AUTH', 'AUTHENTICATION', 'INVALID_REQUEST', 'CONTENT_FILTER', 'ABORTED',
+  'UNSUPPORTED_CONTENT', 'CONTEXT_LENGTH', 'CONTEXT_LENGTH_EXCEEDED',
+])
+const RETRYABLE_FINISH_CODES = new Set([
+  'RATE_LIMIT', 'SERVER', 'TIMEOUT', 'TRANSPORT', 'EMPTY_RESPONSE',
+])
+const PERMANENT_FAILURE_TEXT =
+  /abort|cancel|context (?:length|window)|maximum context|too many (?:tokens|messages)|invalid[ _]request|content[ _]filter|unsupported|authentication|model not found/i
+
+/** Provider-code classification first; message heuristics only when no code. */
+function retryableFinish(code, detail) {
+  const key = String(code ?? '').trim().toUpperCase()
+  if (PERMANENT_FINISH_CODES.has(key)) return false
+  if (RETRYABLE_FINISH_CODES.has(key)) return true
+  const text = `${key} ${detail ?? ''}`
+  if (PERMANENT_FAILURE_TEXT.test(text)) return false
+  return !/\b(?:400|401|403|404|413|422)\b/.test(text)
+}
 // Largest numbered region sent to one extraction request. The whole region is
 // the reference behaviour; past this bound a request cannot be read in one
 // pass, so the engine segments instead of silently truncating.
@@ -279,6 +305,7 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
     super(ctx, { ...config, auto: false })
     this.pending = new WeakSet()
     this.notified = new WeakSet()
+    this.cooldown = new Cooldown()
     this.toolAgents = new WeakSet()
     this.denoiseState = new Map()
     this.#install()
@@ -491,6 +518,7 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
           checkEvidence(io, { evidence: locators })
         } catch (error) {
           locators = {}
+          record.evidenceExport = 'failed'
           this.ctx.logger.warn(`wsc evidence export: ${error.message}`)
         }
         let installed = false
@@ -534,17 +562,24 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
         // that were hidden rather than whatever the log holds now. Evidence is
         // only recorded for a confirmed install.
         if (installed) {
-          recordEvidence(
-            home,
-            session.id,
-            (data.shadowedSeqs ?? []).flatMap((seq) => {
-              const sourceEvent = eventAt(session, seq)
-              if (sourceEvent === undefined) return []
-              const message = session.deriveEventMessage(sourceEvent)
-              if (message === null || message === undefined) return []
-              return [{ seq, digest: digest(message), bytes: byteLength(canonicalJson(message)) }]
-            }),
-          )
+          try {
+            recordEvidence(
+              home,
+              session.id,
+              (data.shadowedSeqs ?? []).flatMap((seq) => {
+                const sourceEvent = eventAt(session, seq)
+                if (sourceEvent === undefined) return []
+                const message = session.deriveEventMessage(sourceEvent)
+                if (message === null || message === undefined) return []
+                return [{ seq, digest: digest(message), bytes: byteLength(canonicalJson(message)) }]
+              }),
+            )
+          } catch (error) {
+            // The checkpoint is already confirmed; an index write failure is a
+            // diagnostic, not a reason to lose billing, state or judgments.
+            record.evidenceIndex = 'failed'
+            this.ctx.logger.warn(`wsc evidence index skipped: ${error.message}`)
+          }
         }
 
         // Model-authored judgments become durable records, outside the
@@ -909,20 +944,26 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
     const events = sessionEvents(agent.session)
     const throughSeq = events.length === 0 ? 0 : events[events.length - 1].seq
     const packageDigest = sha256Hex(canonicalJson(blocks))
-    recordOperation(home, sessionId, {
-      id: packageDigest,
-      state: 'ready',
-      at: new Date().toISOString(),
-      package: {
-        sessionId,
-        provider: checkpoint.provider,
-        model: checkpoint.model,
-        throughSeq,
-        packageDigest,
-        stateDigest: digest(checkpoint.state),
-        judgments: Array.isArray(checkpoint.judgments) ? checkpoint.judgments : [],
-      },
-    })
+    try {
+      recordOperation(home, sessionId, {
+        id: packageDigest,
+        state: 'ready',
+        at: new Date().toISOString(),
+        package: {
+          sessionId,
+          provider: checkpoint.provider,
+          model: checkpoint.model,
+          throughSeq,
+          packageDigest,
+          stateDigest: digest(checkpoint.state),
+          judgments: Array.isArray(checkpoint.judgments) ? checkpoint.judgments : [],
+        },
+      })
+    } catch (error) {
+      // The ready record is bookkeeping; a failed write must not undo a
+      // checkpoint that is already prepared for publication.
+      this.ctx.logger.warn(`wsc ready record skipped: ${error.message}`)
+    }
   }
 
   /**
@@ -963,6 +1004,12 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
     const telemetry = { segments: 0, accepted: 0, rejected: 0, gaps: 0, mode: settings.nosigVerification }
     const extractionUsage = { calls: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 }
     const gaps = []
+    if (journal.storage.readFailed) {
+      // The prior ledger could not be read; carry on with this region only and
+      // say so, since the checkpoint no longer reflects earlier rounds.
+      gaps.push(`journal: prior ledger unavailable (${journal.storage.error.slice(0, 120)}); `
+        + 'checkpoint published from this region only')
+    }
     if (typeof provider !== 'string' || typeof model !== 'string' || provider === '' || model === '') {
       gaps.push('no provider/model for ledger extraction; base checkpoint published')
     } else {
@@ -1024,7 +1071,7 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
             const detail = error instanceof Error ? error.message : String(error ?? '')
             const failed = new Error(`wsc nosig request failed`
               + `${detail ? `: ${detail.slice(0, 160)}` : ''}`, { cause: error })
-            failed.retryable = !/abort|cancel/i.test(detail)
+            failed.retryable = retryableFinish(error?.code, detail)
             throw failed
           }
           if (assembler.finish?.kind !== 'stop') {
@@ -1033,9 +1080,9 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
             const detail = failure?.message ?? assembler.finish?.error?.message ?? ''
             const failed = new Error(`wsc nosig extraction did not finish (${finish}`
               + `${detail ? `: ${String(detail).slice(0, 120)}` : ''})`)
-            // The provider's own rate-limit/server codes are retryable; an
-            // aborted request is not.
-            failed.retryable = !/abort|cancel/i.test(`${failure?.code ?? ''} ${detail}`)
+            // Rate-limit/server/timeout outcomes are retryable; auth, request,
+            // filter, context-length and abort outcomes are final.
+            failed.retryable = retryableFinish(failure?.code, detail)
             throw failed
           }
           extractionUsage.calls += 1
@@ -1073,6 +1120,12 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
         throw new Error(`wsc nosig extraction unavailable (${extraction.failed} segment(s) failed); compaction declined`)
       }
       gaps.push(...extraction.gaps)
+      if (journal.storage.writeFailed) {
+        // Extraction still produced this checkpoint; a later restart will not
+        // see these entries, so the loss is disclosed rather than silent.
+        gaps.push(`journal: ledger not persisted (${journal.storage.error.slice(0, 120)}); `
+          + 'next compaction restarts from the last written round')
+      }
     }
 
     // The passage is the checkpoint: control quotes, the ranked ledger, the
@@ -1634,6 +1687,15 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
     const warnPercent = Math.round(settings.warnRatio * 100)
     const forcePercent = Math.round(settings.forceRatio * 100)
     const requested = this.pending.has(session)
+    if (!requested && this.cooldown.active(session)) {
+      // A failed compaction just left the history intact; retrying now would
+      // spend the same request against the same failure.
+      this.ctx.logger.info(
+        `wsc compaction skipped: decline cooldown `
+        + `${Math.ceil(this.cooldown.remaining(session) / 1000)}s remaining`,
+      )
+      return
+    }
 
     const decision = () => adjust(
       decide(measurement.totalTokens, budget, {
@@ -1713,10 +1775,25 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
     const compact = () => this.compactRegion(range.start, range.end, agent, signal)
     // The range is carried through the async compaction so the checkpoint can
     // address region rows by their durable seq (value keys, verification).
-    const result = await selectedRange.run(
-      { agent, tokens: range.tokens, start: range.start, end: range.end },
-      compact,
-    )
+    let result
+    try {
+      result = await selectedRange.run(
+        { agent, tokens: range.tokens, start: range.start, end: range.end },
+        compact,
+      )
+    } catch (error) {
+      // A cancelled compaction is the caller's decision, not a provider
+      // failure, so it must not pause the next legitimate attempt.
+      const message = error instanceof Error ? error.message : String(error)
+      if (signal?.aborted !== true && !/abort|cancel/i.test(message)) {
+        this.cooldown.block(session, DECLINE_COOLDOWN_MS)
+        this.ctx.logger.info(
+          `wsc compaction declined; automatic retries paused ${DECLINE_COOLDOWN_MS / 1000}s`,
+        )
+      }
+      throw error
+    }
+    this.cooldown.clear(session)
     this.ctx.logger.info(
       `wsc compaction (${timing.action}): shadowed ${result.shadowedSeqs.length} surface nodes, ` +
         `~${result.shadowedTokenCount} tokens (reclaim ~${admission.reclaimTokens}, ${admission.reason})`,
