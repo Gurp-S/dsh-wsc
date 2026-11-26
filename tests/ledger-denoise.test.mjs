@@ -107,6 +107,46 @@ test('denoise: value-bearing claims are identifiable for cap priority', () => {
   assert.equal(hasValue('README describes the options section'), false)
 })
 
+test('denoise: numeric property versions fold across path spellings', () => {
+  const ledger = [
+    entry('fact', 'evals/changedetect surface_index.json: artifact_count = 44', 11.03),
+    entry('decision', 'python/evals/changedetect/goldens/surface_index.json: artifact_count = 37', 13.8),
+  ]
+  const out = denoiseLedger(ledger)
+  assert.equal(out.entries.length, 1)
+  assert.match(out.entries[0].text, /artifact_count = 37/)
+})
+
+test('denoise: unrelated files with the same basename keep separate values', () => {
+  const ledger = [
+    entry('fact', 'src/a/store.js: timeout = 30', 1),
+    entry('fact', 'src/b/store.js: timeout = 60', 2),
+  ]
+  const out = denoiseLedger(ledger)
+  assert.equal(out.entries.length, 2)
+  assert.equal(out.superseded, 0)
+})
+
+test('denoise: a config count supersedes its earlier inclusion list', () => {
+  const ledger = [
+    entry('fact', '.gitignore: gui entries include `gui/src-tauri/target/`; `gui/.xeyo-dev`', 12.03),
+    entry('decision', '.gitignore: gui entry count = 0', 13.81),
+  ]
+  const out = denoiseLedger(ledger)
+  assert.equal(out.entries.length, 1)
+  assert.match(out.entries[0].text, /entry count = 0/)
+})
+
+test('denoise: a named tool present then deleted folds to the deleted state', () => {
+  const ledger = [
+    entry('decision', 'XeyoUI tool/tests still present at python/tools/xeyo_ui_tool and python/tests/test_xeyo_ui_tool.py', 16.78),
+    entry('decision', 'XeyoUI tool/tests archived to .xeyo-archived\\cut-d8-xeyo-ui then deleted (surface prune)', 17),
+  ]
+  const out = denoiseLedger(ledger)
+  assert.equal(out.entries.length, 1)
+  assert.match(out.entries[0].text, /then deleted/)
+})
+
 test('denoise: display cleanup strips double labels but keeps literal escapes', () => {
   assert.equal(cleanEntryText('decision: use cents\nfor money'), 'use cents / for money')
   assert.equal(cleanEntryText("decision: rows joined by '\\n'"), "rows joined by '\\n'")

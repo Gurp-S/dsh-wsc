@@ -1,6 +1,6 @@
 {
   "name": "@gurp-s/dsh-wsc",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "type": "module",
   "description": "WSC compaction for DeepSeek Harness: model-owned 80/85 pressure, provenance-preserving checkpoints, optional view-level denoise.",
   "license": "MIT",

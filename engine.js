@@ -35,7 +35,9 @@ import { prepareContinuity } from './lib/continuity.js'
 import { regionRows, regionValueRows, termsOf } from './lib/values.js'
 import { errorPinOf } from './lib/error-pin.js'
 import { cleanEntryText, denoiseLedger } from './lib/ledger-denoise.js'
-import { asCheckpointState, engineState, receiptsFromRows, recentChanges, recentReceipts } from './lib/state.js'
+import {
+  asCheckpointState, engineState, goalObjective, receiptsFromRows, recentChanges, recentReceipts,
+} from './lib/state.js'
 import { historyIndex, indexSourceCount } from './lib/evidence-index.js'
 import { renderPassage, windowControl } from './lib/passage.js'
 import { capacityWindow } from './lib/window.js'
@@ -173,7 +175,15 @@ const controlEntries = (rows, continuity, journal) => {
   for (const text of carriedControlLines(continuity?.control)) push(text, null)
   for (const row of rows) {
     if (row.message?.role !== 'user') continue
-    if (row.message.source?.kind !== 'user') continue
+    const source = row.message.source?.kind
+    if (source === 'goal') {
+      // The goal objective is the authorized task scope; the repeated round
+      // line is progress, not a requirement.
+      const objective = goalObjective(projectMessageText(row.message))
+      if (objective !== '') push(objective, row.seq)
+      continue
+    }
+    if (source !== 'user') continue
     if (toolResultOf(row.message) !== undefined) continue
     push(projectMessageText(row.message), row.seq)
   }
@@ -576,11 +586,32 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
 
         // H3 baseline: the refs this checkpoint presented become the delta
         // baseline for the next one, measured against what the model saw.
-        if (installed && Array.isArray(telemetry?.ledger?.refs)) {
+        // nosig has no selective ledger refs, but its mechanical state is a
+        // handoff artifact too; persist it beside the selective baseline.
+        const presentedRefs = telemetry?.ledger?.refs
+        const stateSnapshot = telemetry?.stateSnapshot
+        if (installed && (Array.isArray(presentedRefs) || stateSnapshot !== undefined)) {
           try {
+            const file = join(dir, 'state', `${safeSessionId(session.id)}.json`)
+            // A session can switch strategies; keep the selective baseline
+            // when a nosig snapshot has no refs, and vice versa.
+            let previous = {}
+            try { previous = JSON.parse(readFileSync(file, 'utf8')) } catch { previous = {} }
+            const next = {
+              ...(Array.isArray(presentedRefs) ? { presentedRefs } : {}),
+              ...(stateSnapshot === undefined
+                ? {}
+                : {
+                    strategy: telemetry?.strategy ?? settings?.strategy ?? 'nosig',
+                    throughSeq: Number.isInteger(telemetry?.throughSeq)
+                      ? telemetry.throughSeq
+                      : (data.shadowedRange?.end ?? null),
+                    at: record.at,
+                    state: stateSnapshot,
+                  }),
+            }
             mkdirSync(join(dir, 'state'), { recursive: true })
-            writeFileSync(join(dir, 'state', `${safeSessionId(session.id)}.json`),
-              JSON.stringify({ presentedRefs: telemetry.ledger.refs }))
+            writeFileSync(file, JSON.stringify({ ...previous, ...next }))
           } catch (error) {
             this.ctx.logger.warn(`wsc state baseline skipped: ${error.message}`)
           }
@@ -1185,7 +1216,12 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
     const text = [body, gapText].filter((part) => part !== '').join('\n\n')
     if (storedState === null || text.length === 0) throw new Error('wsc: state_required')
     if (byteLength(text) >= sourceBytes * 0.85) throw new Error('wsc: checkpoint_not_smaller')
-    this.#recordTelemetry(agent, { nosig: telemetry })
+    this.#recordTelemetry(agent, {
+      nosig: telemetry,
+      stateSnapshot: storedState,
+      strategy: 'nosig',
+      throughSeq: rows.at(-1)?.seq ?? null,
+    })
     this.ctx.logger.info(
       `wsc nosig checkpoint: ${byteLength(text)} bytes (budget ${budget}) from ${sourceBytes} shadowed bytes; ` +
         `${telemetry.segments} segments, ${telemetry.accepted} entries, ` +

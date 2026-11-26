@@ -275,7 +275,7 @@ test('nosig: delta extraction forbids restating the current ledger', () => {
   assert.match(extInstruction({ entries: 5, revisions: 3, delta: true }), /do not restate an unchanged relation/)
 })
 
-test('nosig: one request extracts the whole region and retries a non-JSON reply once', async () => {
+test('nosig: one request extracts the whole region and retries a non-JSON reply', async () => {
   const { runExtractionOnce } = await import('../lib/nosig.js')
   const journal = new LedgerJournal(null)
   const messages = [
@@ -316,7 +316,7 @@ test('nosig: a rejected entry reports why', async () => {
   assert.equal(result.reasons['literal-not-in-cite'], 1)
 })
 
-test('nosig: a second non-JSON reply becomes a gap, not a journal write', async () => {
+test('nosig: repeated non-JSON replies become a gap, not a journal write', async () => {
   const { runExtractionOnce } = await import('../lib/nosig.js')
   const journal = new LedgerJournal(null)
   const result = await runExtractionOnce([message('user', 'note')], journal, {
@@ -328,7 +328,7 @@ test('nosig: a second non-JSON reply becomes a gap, not a journal write', async 
   assert.equal(journal.entries().length, 0)
 })
 
-test('nosig: a transport failure is retried once, and a truncated answer asks for less', async () => {
+test('nosig: a transport failure is retried, and a truncated answer asks for less', async () => {
   const { runExtractionOnce } = await import('../lib/nosig.js')
   const messages = [message('user', 'appended REL-9482 to docs/relnotes.md')]
   const prompts = []
@@ -382,7 +382,7 @@ test('nosig: extraction pass persists accepted entries and reports gaps', async 
       return answers[calls.length - 1]
     },
   })
-  assert.equal(calls.length, 4)
+  assert.equal(calls.length, 5)
   assert.equal(result.segments, 1)
   assert.equal(result.accepted, 1)
   assert.equal(result.gaps.length, 1)
@@ -439,6 +439,28 @@ test('nosig: a rate-limited request is retried with a smaller output budget', as
   assert.equal(result.accepted, 1)
 })
 
+test('nosig: a segment is retried three times before it becomes a gap', async () => {
+  const { runExtractionOnce } = await import('../lib/nosig.js')
+  const calls = []
+  const waits = []
+  const result = await runExtractionOnce([message('user', 'note')], new LedgerJournal(null), {
+    wait: async (ms) => { waits.push(ms) },
+    callModel: async () => {
+      calls.push(1)
+      const error = new Error('429 rate limited')
+      error.retryable = true
+      throw error
+    },
+  })
+  assert.equal(calls.length, 4)
+  assert.equal(waits.length, 3)
+  assert.ok(waits[0] >= 1800 && waits[0] <= 2200)
+  assert.ok(waits[1] >= 5400 && waits[1] <= 6600)
+  assert.ok(waits[2] >= 9000 && waits[2] <= 11000)
+  assert.equal(result.attempted, 4)
+  assert.equal(result.failed, 1)
+})
+
 test('nosig: pass two retries a failed segment after the later segments are done', async () => {
   const { runExtraction } = await import('../lib/nosig.js')
   const journal = new LedgerJournal(null)
@@ -489,7 +511,7 @@ test('nosig: no usable segment is reported for the engine to decline', async () 
       throw error
     },
   })
-  assert.equal(result.attempted, 6)
+  assert.equal(result.attempted, 8)
   assert.equal(result.usable, 0)
   assert.equal(result.failed, 2)
   assert.equal(result.gaps.length, 2)

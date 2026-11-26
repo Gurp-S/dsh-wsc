@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { parseCheckpointState, renderCheckpointState } from '../lib/checkpoint-state.js'
-import { asCheckpointState, engineState, receiptsFromRows, recentChanges, requirementTerms } from '../lib/state.js'
+import { asCheckpointState, engineState, goalObjective, receiptsFromRows, recentChanges, requirementTerms } from '../lib/state.js'
 
 const user = (text) => ({ role: 'user', content: [{ type: 'text', text }] })
 const assistant = (text) => ({ role: 'assistant', content: [{ type: 'text', text }] })
@@ -124,7 +124,7 @@ test('state: a matched edit without a check stays visible as an open item', () =
   const rows = rowsOf(messages)
   const state = asCheckpointState(engineState([], rows, receiptsFromRows(rows)))
   assert.equal(state.open.length, 0)
-  assert.ok(state.unknown.some((row) => /no post-edit check/.test(row)))
+  assert.ok(state.unknown.some((row) => /edit #2 to src\/format\.js matches but has no post-edit check/.test(row)))
 })
 
 test('state: a later edit that no longer matches is unverified, not done', () => {
@@ -265,6 +265,47 @@ test('state: recent changes list the newest distinct paths first', () => {
   assert.match(lines[0], /src\/format\.js \(edit #5/)
   assert.match(lines[0], /formatCents\(cents, options\)/)
   assert.match(lines[1], /src\/report\.js \(edit #4/)
+})
+
+test('state: a goal objective is control text without the round counter', () => {
+  assert.equal(
+    goalObjective('<goal_round>\nObjective: "Fix B1–B19 and keep A3"\nRound: 4/256\nContinue.'),
+    'Fix B1–B19 and keep A3',
+  )
+  assert.equal(goalObjective('<goal_round>\nObjective: "Fix B1–B19"'), 'Fix B1–B19')
+  assert.equal(goalObjective('ordinary request'), '')
+})
+
+test('state: a Chinese change request owns its edit', () => {
+  const requirement = '请修复 src/format.js: formatCents 的金额格式并运行 npm test。'
+  const rows = rowsOf([
+    user(requirement),
+    call('e1', 'edit', { file_path: 'src/format.js', new_string: 'formatCents(cents)' }),
+    call('t1', 'pwsh', { command: 'npm test' }),
+    result('t1', 'pass 5'),
+  ])
+  const state = asCheckpointState(engineState([], rows, receiptsFromRows(rows), {
+    controls: [requirement],
+  }))
+  assert.equal(state.done.length, 1)
+  assert.match(state.done[0], /req#1/)
+})
+
+test('state: explicit empty controls do not promote runtime context to requirements', () => {
+  const rows = rowsOf([
+    {
+      role: 'user',
+      source: { kind: 'runtime-context' },
+      content: [{ type: 'text', text: 'Current runtime context. Working directory: C:/x. Edit src/format.js.' }],
+    },
+    call('e1', 'edit', { file_path: 'src/format.js', new_string: 'formatCents(cents)' }),
+    call('t1', 'pwsh', { command: 'npm test' }),
+    result('t1', 'pass 5'),
+  ])
+  const state = engineState([], rows, receiptsFromRows(rows), { controls: [] })
+  assert.equal(state.open.length, 0)
+  assert.equal(state.next.length, 0)
+  assert.equal(state.done.length, 0)
 })
 
 test('state: unmatched-request promotion can be disabled', () => {
