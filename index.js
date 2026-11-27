@@ -1,5 +1,6 @@
 import { loadDshPackage } from './lib/resolve.js'
 import { resolvePayloadPolicy } from './lib/payload.js'
+import { STATUS_ROUTE, createStatusHandler } from './lib/status.js'
 
 const { default: z } = await loadDshPackage('@deepseek-ai/schemastery')
 const { Service } = await loadDshPackage('@deepseek-ai/cordis')
@@ -69,8 +70,18 @@ export const Config = z.object({
   // decision to the section budget. The 800 default is the shipped behaviour.
   controlItemCap: live(z.number().step(1).min(0), 800),
   // Total byte cap on the passage's quoted control list. 0 keeps every request
-  // the way the reference does; a long session should bound it.
-  controlMaxBytes: live(z.number().step(1).min(0), 0),
+  // the way the reference does; 8000 bounds a long verbatim list.
+  controlMaxBytes: live(z.number().step(1).min(0), 8000),
+  // An earlier request larger than this is omitted whole rather than letting
+  // one pasted block crowd out newer requests. The newest request is always
+  // kept verbatim; 0 disables the per-item bound.
+  controlItemMaxBytes: live(z.number().step(1).min(0), 4000),
+  // A ledger with entries must never render as an empty section: keep the
+  // highest-ranked claim even when the byte cap admits none.
+  ledgerFloor: live(z.boolean(), true),
+  // When no request matched work in this region, name the latest actionable
+  // request as next instead of publishing a state block with no next line.
+  promoteLatestRequest: live(z.boolean(), true),
   // 'quotes' keeps every user request verbatim (shipped). 'command-state' keeps
   // the first real command and reduces later ones to deterministic status lines.
   controlMode: live(z.string(), 'quotes'),
@@ -79,9 +90,27 @@ export const Config = z.object({
   commandHeadChars: live(z.number().step(1).min(24), 96),
   commandSectionBytes: live(z.number().step(1).min(400), 1800),
   commandDoneLines: live(z.number().step(1).min(0).max(24), 3),
-  // Legacy alias of `payloadWorkingset`; either flag turns the passage working
-  // set on. The single switch is `payloadWorkingset` now.
-  passageWorkingset: live(z.boolean(), false),
+  // Mechanical progress board. Reads a PR table from a plan document in the
+  // region; without one it falls back to requirement-level done/open/next.
+  progressBoard: live(z.boolean(), false),
+  // Category prefixes inside the Open/Unknown rows: Acceptance / Blocker / Gap.
+  openCategories: live(z.boolean(), false),
+  // Approximate topic counts for entries dropped by the ledger byte cap.
+  omittedTopics: live(z.boolean(), false),
+  // Render suite pass/fail counts instead of the first output line.
+  checkSummary: live(z.boolean(), false),
+  // Markdown bodies keep an outline, tables and the last section instead of a
+  // raw head/tail slice.
+  docStructure: live(z.boolean(), false),
+  // Treat pathless controls as requirements and bind them to the latest edit;
+  // without it only path-bearing requests enter the work state.
+  requirementTargets: live(z.boolean(), false),
+  // Archive ledger facts/decisions outside the current request's scope instead
+  // of spending checkpoint bytes on an earlier task.
+  ledgerScope: live(z.boolean(), false),
+  // Let the extraction call write up to three next actions, each attributed to
+  // a user message; the deterministic promotion stands when the gate fails.
+  modelNext: live(z.boolean(), false),
   // Project requirements over the accumulated controls, not only the current
   // region. Off reproduces the pre-2026-11-21 region-only projection.
   stateFromControls: live(z.boolean(), true),
@@ -125,6 +154,8 @@ export const Config = z.object({
   payloadWorkingsetItemCap: live(z.number().step(1).min(200), 700),
   payloadWorkingsetVersion: live(z.number().step(1).min(1).max(2), 2),
   payloadWorkingsetSectionCap: live(z.number().step(1).min(400), 2500),
+  // Legacy alias of `payloadWorkingset`; either flag turns the working set on.
+  passageWorkingset: live(z.boolean(), false),
   // Model-written state narrative: replaces the file-body working set with a
   // short prose description of where the work stands (settled / open / unsure).
   // The compressing model judges what is uncertain; the engine only carries it.
@@ -235,7 +266,13 @@ export default class WscConfigService extends Service {
       controlMaxBytes:
         Number.isInteger(options.controlMaxBytes) && options.controlMaxBytes >= 0
           ? options.controlMaxBytes
-          : 0,
+          : 8000,
+      controlItemMaxBytes:
+        Number.isInteger(options.controlItemMaxBytes) && options.controlItemMaxBytes >= 0
+          ? options.controlItemMaxBytes
+          : 4000,
+      ledgerFloor: options.ledgerFloor !== false,
+      promoteLatestRequest: options.promoteLatestRequest !== false,
       controlMode: options.controlMode === 'command-state' ? 'command-state' : 'quotes',
       originMaxChars:
         Number.isInteger(options.originMaxChars) && options.originMaxChars >= 160
@@ -310,12 +347,36 @@ export default class WscConfigService extends Service {
       // The board compares a request's seq with an edit's seq; without durable
       // seqs the comparison would mix positions with session numbers.
       requirementBoard: options.requirementBoard === true && options.receiptSeq !== false,
+      progressBoard: options.progressBoard === true,
+      openCategories: options.openCategories === true,
+      omittedTopics: options.omittedTopics === true,
+      checkSummary: options.checkSummary === true,
+      docStructure: options.docStructure === true,
+      requirementTargets: options.requirementTargets === true,
+      ledgerScope: options.ledgerScope === true,
+      modelNext: options.modelNext === true,
     })
 
     // The bundle ships its own Settings page; keep the schema-derived page off
     // so the two never render the same fields twice.
     ctx.inject(['settings'], (child) => {
       child.effect(() => child.settings.configure({ auto: false }, ctx.fiber))
+    })
+
+    // One-line status for the chat UI. A host without a web server (CLI) simply
+    // renders no status line; the record on disk stays harmless.
+    ctx.inject(['webServer'], (child) => {
+      child.effect(() => {
+        let server = null
+        try { server = child.get('webServer') } catch { server = null }
+        if (server === null || typeof server.register !== 'function') return () => {}
+        const dispose = server.register({
+          kind: 'exact',
+          path: STATUS_ROUTE,
+          handler: createStatusHandler(),
+        })
+        return () => { try { dispose() } catch { /* already disposed */ } }
+      }, 'wsc: status route')
     })
   }
 }

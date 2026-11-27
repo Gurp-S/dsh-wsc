@@ -147,7 +147,8 @@ test('state: a recorded next action becomes unknown after a later change that sh
   ]
   const rows = rowsOf(messages)
   const state = engineState([], rows, receiptsFromRows(rows))
-  assert.equal(state.next.length, 0)
+  assert.equal(state.next.length, 1)
+  assert.match(state.next[0], /Instead, change the limit/)
   assert.ok(state.unknown.some((row) => /stale after a later change/.test(row)))
 })
 
@@ -177,7 +178,9 @@ test('state: a previous checkpoint does not carry its next line forward', () => 
   const state = engineState([], rows, receiptsFromRows(rows), {
     isSynthetic: (message) => message === checkpoint,
   })
-  assert.equal(state.next.length, 0)
+  assert.equal(state.next.length, 1)
+  assert.doesNotMatch(state.next[0], /FEATURE_X/)
+  assert.match(state.next[0], /Implement REPORT_LIMIT/)
 })
 
 test('state: an assistant-originated value is not tagged twice', () => {
@@ -249,6 +252,57 @@ test('state: the newest request with no local edit becomes next, not an empty bl
   assert.equal(state.next.length, 1)
   assert.match(state.next[0], /req#2/)
   assert.match(state.next[0], /buildJsonReport/)
+})
+
+test('state: a pathless actionable request becomes next instead of an empty block', () => {
+  const rows = rowsOf([user('先看一下现状。')])
+  const controls = ['帮我加入 repos 并建立代码图谱', '直接说为什么']
+  const state = engineState([], rows, [], { controls })
+  assert.equal(state.next.length, 1)
+  assert.match(state.next[0], /req#1/)
+  assert.match(state.next[0], /建立代码图谱/)
+})
+
+test('state: a pathless Chinese request binds to the latest edit when targets are on', () => {
+  const messages = [
+    user('优化飞书桥接，增加图片与文件传输'),
+    call('e1', 'edit', { file_path: 'src/bridge.js', old_string: 'a', new_string: '// 飞书 图片传输\nconst a = 1' }),
+  ]
+  const rows = rowsOf(messages)
+  const receipts = receiptsFromRows(rows)
+  const on = engineState([], rows, receipts, {
+    controls: ['优化飞书桥接，增加图片与文件传输'],
+    synthesizeControls: true,
+    promoteLatest: false,
+    promoteUnmatched: false,
+  })
+  assert.ok(on.open.length + on.done.length > 0, 'the request owns an edit')
+  const off = engineState([], rows, receipts, {
+    controls: ['优化飞书桥接，增加图片与文件传输'],
+    synthesizeControls: false,
+    promoteLatest: false,
+    promoteUnmatched: false,
+  })
+  assert.equal(off.done.length + off.open.length + off.next.length + off.unknown.length, 0)
+})
+
+test('state: Chinese terms are available to requirement matching', () => {
+  assert.ok(requirementTerms('优化飞书桥接，增加图片传输').includes('飞书'))
+  assert.ok(requirementTerms('优化飞书桥接，增加图片传输').includes('图片'))
+})
+
+test('state: a question is not promoted into next', () => {
+  const rows = rowsOf([user('为什么会这样？')])
+  const state = engineState([], rows, [], { controls: ['为什么会这样？', '直接说为什么'] })
+  assert.equal(state.next.length, 0)
+})
+
+test('state: latest-request promotion can be disabled', () => {
+  const rows = rowsOf([user('先看一下现状。')])
+  const state = engineState([], rows, [], {
+    controls: ['帮我加入 repos 并建立代码图谱'], promoteLatest: false,
+  })
+  assert.equal(state.next.length, 0)
 })
 
 test('state: recent changes list the newest distinct paths first', () => {
@@ -326,4 +380,23 @@ test('state: unmatched-request promotion can be disabled', () => {
   })
   assert.equal(state.done.length, 1)
   assert.equal(state.next.length, 0)
+})
+
+test('state: a process listing that mentions Test-Path is not a check', () => {
+  const rows = rowsOf([
+    call('e1', 'edit', { file_path: 'src/a.js', old_string: 'a', new_string: 'b' }),
+    call('t1', 'pwsh', { command: "Get-CimInstance Win32_Process | Where-Object { Test-Path $_.Path }" }),
+    result('t1', 'Name ProcessId\nnode 1234'),
+  ])
+  const receipts = receiptsFromRows(rows)
+  assert.equal(receipts[0].check, null)
+})
+
+test('state: a real suite run still verifies the edit', () => {
+  const rows = rowsOf([
+    call('e1', 'edit', { file_path: 'src/a.js', old_string: 'a', new_string: 'b' }),
+    call('t1', 'pwsh', { command: 'node --test' }),
+    result('t1', 'pass 6\nfail 0'),
+  ])
+  assert.equal(receiptsFromRows(rows)[0].check, 3)
 })

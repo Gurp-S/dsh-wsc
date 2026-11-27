@@ -42,7 +42,7 @@ test('passage: a receipt already stated by the state is not repeated', () => {
     path: 'src/report.js', edit: 4, check: 6, command: 'npm test', result: 'ok', stale: false,
   }]
   assert.equal(receiptsText(receipts, ['src/report.js matches (edit #4, check #6 npm test: ok)']), '')
-  assert.match(receiptsText(receipts), /^Checks: src\/report\.js was edited at #4; the check at #6 \(npm test\) reported: ok\.$/)
+  assert.match(receiptsText(receipts), /^Checks: check #6 \(npm test → ok\) covers src\/report\.js \(edit #4\)\.$/)
   assert.match(receiptsText([{ path: 'a.js', edit: 2, check: null }]),
     /^Checks: a\.js was edited at #2 and no later check covers it\.$/)
 })
@@ -100,24 +100,76 @@ test('passage: trimming drops the index before the ledger, and keeps one entry',
   assert.ok(!text.includes('Evidence index'), 'index gave up its slot first')
   assert.ok(text.includes('Constraint: keep this.'))
   const tiny = renderPassage({ control: [], ledger, budget: 10 })
-  assert.equal(tiny, 'Ledger (current): Constraint: keep this.')
+  assert.equal(tiny, 'Ledger (current): Constraint: keep this. 1 more removed to fit the checkpoint budget.')
+})
+
+test('passage: the ledger keeps one entry even when the cap admits none', () => {
+  const ledger = [entry('constraint', `keep this ${'z'.repeat(80)}`, 1), entry('fact', 'tail fact', 2)]
+  const floored = capLedger(ledger, 10, { valueFirst: true })
+  assert.equal(floored.entries.length, 1)
+  assert.match(floored.entries[0].text, /^keep this/)
+  assert.equal(floored.omitted, 1)
+  const unfloored = capLedger(ledger, 10, { valueFirst: true, floor: false })
+  assert.equal(unfloored.entries.length, 0)
+})
+
+test('passage: an empty ledger is stated, not silently dropped from the structure', () => {
+  const text = renderPassage({ control: ['do it'], ledger: [], budget: 4096 })
+  assert.match(text, /Ledger \(current\): \(none extracted in this region\)\./)
+})
+
+test('passage: budget removal is disclosed separately from the byte cap', () => {
+  const ledger = [
+    entry('constraint', `first claim ${'a'.repeat(120)}`, 1),
+    entry('fact', `second claim ${'b'.repeat(120)}`, 2),
+    entry('fact', `third claim ${'c'.repeat(120)}`, 3),
+  ]
+  const text = renderPassage({
+    control: [`control ${'d'.repeat(600)}`], ledger, ledgerMaxBytes: 500, budget: 700,
+  })
+  assert.match(text, /lower-priority ledger entries omitted by the byte cap/)
+  assert.match(text, /more removed to fit the checkpoint budget/)
+})
+
+test('passage: cut quotes keep their original request numbers', () => {
+  const text = renderPassage({
+    control: ['b'.repeat(20), 'c'.repeat(20)], controlOffset: 1, numbered: true, ledger: [], budget: 4096,
+  })
+  assert.match(text, /2\. "b+/)
+  assert.match(text, /3\. "c+/)
+})
+
+test('passage: an oversized earlier request is dropped whole, the newest stays', () => {
+  const texts = ['a'.repeat(100), 'b'.repeat(5000), 'c'.repeat(50)]
+  const windowed = windowControl(texts, 6000, { itemMaxBytes: 4000 })
+  assert.deepEqual(windowed.texts, [texts[0], texts[2]])
+  assert.deepEqual(windowed.indices, [0, 2])
+  assert.equal(windowed.omitted, 1)
+  const text = renderPassage({
+    control: windowed.texts, controlNumbers: windowed.indices.map((index) => index + 1),
+    numbered: true, ledger: [], budget: 4096,
+  })
+  assert.match(text, /1\. "a+/)
+  assert.match(text, /3\. "c+/)
+  assert.doesNotMatch(text, /2\. "b+/)
 })
 
 test('passage: old control messages are omitted whole and the cut is disclosed', () => {
   const texts = ['a'.repeat(100), 'b'.repeat(100), 'c'.repeat(100)]
-  assert.deepEqual(windowControl(texts, 0), { texts, omitted: 0 })
+  assert.deepEqual(windowControl(texts, 0), { texts, indices: [0, 1, 2], omitted: 0 })
   const windowed = windowControl(texts, 220)
   assert.deepEqual(windowed.texts, [texts[1], texts[2]])
+  assert.deepEqual(windowed.indices, [1, 2])
   assert.equal(windowed.omitted, 1)
   const text = renderPassage({ control: windowed.texts, controlOmitted: 1, budget: 4096 })
   assert.match(text, /^User requirements, quoted verbatim: "b+" "c+"/)
-  assert.match(text, /1 earlier requests omitted; later instructions and the ledger carry their state\.$/)
+  assert.match(text, /1 earlier requests omitted; later instructions and the ledger carry their state\./)
 })
 
-test('passage: an optional working-set block sits between state and checks', () => {
+test('passage: state and the working set precede the ranked ledger', () => {
   const text = renderPassage({
-    control: [],
-    ledger: [],
+    control: ['add a flag'],
+    ledger: [entry('decision', 'keep the flag.', 1)],
     stateBlock: '## Current state (model account; unverified)\n- Done: x',
     workingSet: '## Working set\n- src/report.js — edit #3: "y"',
     receipts: [{ path: 'src/report.js', edit: 3, check: 4, command: 'npm test', result: 'ok' }],
@@ -125,15 +177,20 @@ test('passage: an optional working-set block sits between state and checks', () 
   })
   const lines = text.split('\n\n').map((part) => part.split('\n')[0])
   assert.deepEqual(lines, [
+    'User requirements, quoted verbatim: "add a flag".',
     '## Current state (model account; unverified)',
     '## Working set',
-    'Checks: src/report.js was edited at #3; the check at #4 (npm test) reported: ok.',
+    'Ledger (current): Decision: keep the flag.',
+    'Checks: check #4 (npm test → ok) covers src/report.js (edit #3).',
   ])
+  assert.ok(text.indexOf('## Current state') < text.indexOf('## Working set'))
+  assert.ok(text.indexOf('## Working set') < text.indexOf('Ledger (current)'))
 })
 
 test('passage: control quotes are deduplicated and always first', () => {
   const text = renderPassage({ control: ['add a flag', 'add a flag', 'run tests'], ledger: [], budget: 4096 })
-  assert.equal(text, 'User requirements, quoted verbatim: "add a flag" "run tests".')
+  assert.equal(text, 'User requirements, quoted verbatim: "add a flag" "run tests".'
+    + '\n\nLedger (current): (none extracted in this region).')
 })
 
 test('evidence index: one slot per kind survives before quotas fill', () => {
@@ -177,4 +234,29 @@ test('passage: recent changes follow the state block and precede checks', () => 
   assert.ok(text.includes('## Recent changes\n- src/format.js (edit #3, check #4): formatCents(cents)'))
   assert.ok(text.indexOf('## Current state') < text.indexOf('## Recent changes'))
   assert.ok(text.indexOf('## Recent changes') < text.indexOf('Checks:'))
+})
+
+test('passage: omitted ledger topics give a direction, not a second total', () => {
+  const ledger = [
+    entry('constraint', 'keep this.', 1),
+    entry('fact', 'config.json: timeoutMs = 180000', 2),
+    entry('verification', 'markdown-split test: 6 pass / 0 fail', 3),
+    entry('fact', 'src/report.js was edited at #12', 4),
+    entry('fact', 'a plain observation', 5),
+  ]
+  const text = renderPassage({ ledger, ledgerMaxBytes: 1, omittedTopics: true, budget: 4096 })
+  assert.match(text, /4 lower-priority ledger entries omitted by the byte cap/)
+  assert.match(text, /approx 1 config\/default, 1 test\/verification, 1 historical path, 1 other/)
+  const plain = renderPassage({ ledger, ledgerMaxBytes: 1, budget: 4096 })
+  assert.doesNotMatch(plain, /approx/)
+})
+
+test('checks: files sharing one check are grouped into one sentence', () => {
+  const text = receiptsText([
+    { path: 'a.js', edit: 10, check: 11, command: 'node --test', result: 'ok' },
+    { path: 'b.js', edit: 12, check: 11, command: 'node --test', result: 'ok' },
+    { path: 'c.js', edit: 13, check: null },
+  ])
+  assert.match(text, /check #11 \(node --test → ok\) covers a\.js \(edit #10\), b\.js \(edit #12\)\./)
+  assert.match(text, /c\.js was edited at #13 and no later check covers it\./)
 })

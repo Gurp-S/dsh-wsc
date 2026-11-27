@@ -33,13 +33,17 @@ import { currentEntries } from './lib/state-view.js'
 import { stateDelta } from './lib/state-delta.js'
 import { prepareContinuity } from './lib/continuity.js'
 import { regionRows, regionValueRows, termsOf } from './lib/values.js'
-import { errorPinOf } from './lib/error-pin.js'
+import { errorContextOf, errorPinOf } from './lib/error-pin.js'
+import { categorizeState } from './lib/state-categories.js'
+import { planTextsOf, progressRows, renderProgress } from './lib/progress.js'
+import { applyModelNext } from './lib/next-model.js'
 import { cleanEntryText, denoiseLedger } from './lib/ledger-denoise.js'
 import {
   asCheckpointState, engineState, goalObjective, receiptsFromRows, recentChanges, recentReceipts,
 } from './lib/state.js'
 import { historyIndex, indexSourceCount } from './lib/evidence-index.js'
-import { renderPassage, windowControl } from './lib/passage.js'
+import { renderPassage, windowControl, omittedTopicCounts } from './lib/passage.js'
+import { scopeLedger } from './lib/ledger-scope.js'
 import { capacityWindow } from './lib/window.js'
 import { requirementBoard, requirementBoardText } from './lib/requirement-board.js'
 import { classifyCommands, renderCommandState } from './lib/command-state.js'
@@ -50,10 +54,15 @@ import {
   LedgerJournal, runExtraction, runExtractionOnce, segmentMessages, numberedSegment,
 } from './lib/nosig.js'
 import { Cooldown } from './lib/cooldown.js'
+import { writeStatus } from './lib/status.js'
 
 const { BasicCompactionEngine } = await loadDshPackage('@deepseek-ai/dsh-compaction-basic')
 const { toolPairingBalancedBefore, isCompactCheckpointSource } = await loadDshPackage('@deepseek-ai/dsh-compaction')
-const { BlockAssembler, createUserMessage } = await loadDshPackage('@deepseek-ai/dsh-llm')
+const {
+  BlockAssembler, LlmError, createUserMessage,
+  CONTEXT_WINDOW_EXCEEDED_CODE, INVALID_CREDENTIAL_CODE, QUOTA_EXCEEDED_CODE,
+  isContextWindowExceededError, isQuotaExceededError,
+} = await loadDshPackage('@deepseek-ai/dsh-llm')
 
 const TOOL_NAME = 'compact_context'
 const MAX_SELECTION_TOKENS = 4096
@@ -66,6 +75,8 @@ const DECLINE_COOLDOWN_MS = 60_000
 const PERMANENT_FINISH_CODES = new Set([
   'AUTH', 'AUTHENTICATION', 'INVALID_REQUEST', 'CONTENT_FILTER', 'ABORTED',
   'UNSUPPORTED_CONTENT', 'CONTEXT_LENGTH', 'CONTEXT_LENGTH_EXCEEDED',
+  CONTEXT_WINDOW_EXCEEDED_CODE, QUOTA_EXCEEDED_CODE, INVALID_CREDENTIAL_CODE,
+  'ACCOUNT_QUOTA',
 ])
 const RETRYABLE_FINISH_CODES = new Set([
   'RATE_LIMIT', 'SERVER', 'TIMEOUT', 'TRANSPORT', 'EMPTY_RESPONSE',
@@ -73,12 +84,25 @@ const RETRYABLE_FINISH_CODES = new Set([
 const PERMANENT_FAILURE_TEXT =
   /abort|cancel|context (?:length|window)|maximum context|too many (?:tokens|messages)|invalid[ _]request|content[ _]filter|unsupported|authentication|model not found/i
 
-/** Provider-code classification first; message heuristics only when no code. */
+/** Token price of the prepared checkpoint, for the one-line UI status. */
+function summaryTokens(meter, summary) {
+  try {
+    const content = Array.isArray(summary) ? summary : [{ type: 'text', text: String(summary ?? '') }]
+    const tokens = meter?.estimateMessage?.({ role: 'user', content })
+    return Number.isFinite(tokens) && tokens > 0 ? Math.round(tokens) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** Provider-code classification first; the llm-owned classifiers when the
+ * provider only supplies wording; status heuristics last. */
 function retryableFinish(code, detail) {
   const key = String(code ?? '').trim().toUpperCase()
   if (PERMANENT_FINISH_CODES.has(key)) return false
   if (RETRYABLE_FINISH_CODES.has(key)) return true
   const text = `${key} ${detail ?? ''}`
+  if (isContextWindowExceededError(text) || isQuotaExceededError(text)) return false
   if (PERMANENT_FAILURE_TEXT.test(text)) return false
   return !/\b(?:400|401|403|404|413|422)\b/.test(text)
 }
@@ -459,8 +483,16 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
           }
         }
 
-        const telemetry = this.#telemetry.get(session.id)
-        if (telemetry !== undefined) this.#telemetry.delete(session.id)
+        // A summary is only accepted when it is bound to a package this engine
+        // issued: same session, provider, model and summary digest. Anything
+        // else is an unknown install and is reported rather than recorded.
+        const packageDigest = sha256Hex(canonicalJson(Array.isArray(data.summary) ? data.summary : []))
+        const operation = loadOperations(home, session.id).get(packageDigest)
+        const inMemory = this.#telemetry.get(session.id)
+        if (inMemory !== undefined) this.#telemetry.delete(session.id)
+        // A replayed event or a restarted engine has no in-memory telemetry;
+        // the ready record persisted it against this exact summary digest.
+        const telemetry = inMemory ?? operation?.package?.wsc?.telemetry
 
         const record = {
           kind: shadow ? 'shadow' : 'compaction',
@@ -491,11 +523,6 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
               }),
           usage: data.usage ?? null,
         }
-        // A summary is only accepted when it is bound to a package this engine
-        // issued: same session, provider, model and summary digest. Anything
-        // else is an unknown install and is reported rather than recorded.
-        const packageDigest = sha256Hex(canonicalJson(Array.isArray(data.summary) ? data.summary : []))
-        const operation = loadOperations(home, session.id).get(packageDigest)
 
         // Export the shadowed observations before anything is confirmed: the
         // bytes are fixed now, so a later read can prove it returns what was
@@ -824,7 +851,7 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
         for (const event of sessionEvents(session)) {
           const message = session.deriveEventMessage(event)
           if (message === null || message === undefined) continue
-          const text = messageText(message)
+          const text = projectMessageText(message)
           const at = text.toLowerCase().indexOf(lower)
           if (at === -1) continue
           const start = Math.max(0, at - 80)
@@ -957,6 +984,7 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
           packageDigest,
           stateDigest: digest(checkpoint.state),
           judgments: Array.isArray(checkpoint.judgments) ? checkpoint.judgments : [],
+          ...(checkpoint.wsc === undefined ? {} : { wsc: checkpoint.wsc }),
         },
       })
     } catch (error) {
@@ -991,6 +1019,16 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
     }
 
     const messages = input.messages.filter((message) => message.role !== 'system')
+    // User messages get a stable ordinal inside this compaction so the model
+    // can attribute a next action to one; goal rounds carry no number.
+    const userNumbers = new Map()
+    let userCount = 0
+    for (const message of messages) {
+      if (message.role !== 'user' || message.source?.kind === 'goal') continue
+      if (toolResultOf(message) !== undefined) continue
+      userCount += 1
+      userNumbers.set(message, userCount)
+    }
     const { sourceBytes, budget } = checkpointBudget(messages, { payload: settings.payload })
 
     const header = agent.session.requestHeader()?.config
@@ -1004,6 +1042,10 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
     const telemetry = { segments: 0, accepted: 0, rejected: 0, gaps: 0, mode: settings.nosigVerification }
     const extractionUsage = { calls: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 }
     const gaps = []
+    const statusProgress = { done: 0, total: 0 }
+    // Model-written next rows live on the extraction result, which is built
+    // inside the provider branch but consumed by the state assembly below.
+    let extraction = null
     if (journal.storage.readFailed) {
       // The prior ledger could not be read; carry on with this region only and
       // say so, since the checkpoint no longer reflects earlier rounds.
@@ -1018,18 +1060,21 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
       // in one pass still falls back to ordered segments.
       const singlePass = byteLength(numberedSegment(messages).text) <= NOSIG_SINGLE_MAX_BYTES
       const segments = singlePass ? [messages] : segmentMessages(messages, { maxBytes: settings.nosigSegmentBytes })
+      statusProgress.total = singlePass ? 1 : segments.length
       const run = singlePass ? runExtractionOnce : runExtraction
+      const regionTokens = selectedRange.getStore()?.tokens
       // Backoff is spent inside the compaction pre-step, so it shares the
       // caller's cancellation and stays inside one bounded budget.
       const wait = (ms) => new Promise((resolve, reject) => {
+        const abortError = () => Object.assign(new Error('wsc nosig request aborted'), { code: 'ABORTED' })
         if (signal?.aborted === true) {
-          reject(new Error('wsc nosig request aborted'))
+          reject(abortError())
           return
         }
         let timer
         const onAbort = () => {
           clearTimeout(timer)
-          reject(new Error('wsc nosig request aborted'))
+          reject(abortError())
         }
         timer = setTimeout(() => {
           signal?.removeEventListener('abort', onAbort)
@@ -1037,14 +1082,33 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
         }, ms)
         signal?.addEventListener('abort', onAbort, { once: true })
       })
-      const extraction = await run(singlePass ? messages : segments, journal, {
+      extraction = await run(singlePass ? messages : segments, journal, {
         mode: settings.nosigVerification,
+        labelOf: (message) => userNumbers.get(message),
         entries: settings.nosigEntryCap,
         revisions: settings.nosigRevisionCap,
         delta: settings.extractDelta === true,
         wait,
+        onProgress: ({ done, total, result: progressResult }) => {
+          statusProgress.done = done
+          statusProgress.total = total
+          writeStatus(agent.session.id, {
+            phase: 'running',
+            fromTokens: regionTokens,
+            segmentsDone: done,
+            segmentsTotal: total,
+            accepted: progressResult?.accepted ?? 0,
+            gaps: progressResult?.gaps?.length ?? 0,
+            retried: progressResult?.retried ?? 0,
+            // Cumulative extraction usage so the client can show how much the
+            // model has written so far, not only how many segments finished.
+            inputTokens: extractionUsage.inputTokens,
+            outputTokens: extractionUsage.outputTokens,
+            calls: extractionUsage.calls,
+          })
+        },
         callModel: async (numbered, prior, instruction, budget) => {
-          if (signal?.aborted === true) throw new Error('wsc nosig request aborted')
+          if (signal?.aborted === true) throw new LlmError('wsc nosig request aborted', 'ABORTED')
           const assembler = new BlockAssembler()
           try {
             for await (const chunk of this.ctx.llm.stream({
@@ -1067,7 +1131,9 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
               ...(signal === undefined ? {} : { signal }),
             })) assembler.push(chunk)
           } catch (error) {
-            if (signal?.aborted === true) throw error
+            // Cancellation is authoritative: the caller stopped the turn, so
+            // the whole compression must fail rather than publish a partial one.
+            if (signal?.aborted === true || error?.code === 'ABORTED') throw error
             const detail = error instanceof Error ? error.message : String(error ?? '')
             const failed = new Error(`wsc nosig request failed`
               + `${detail ? `: ${detail.slice(0, 160)}` : ''}`, { cause: error })
@@ -1078,6 +1144,11 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
             const finish = assembler.finish?.kind ?? 'unknown'
             const failure = assembler.finish?.failure
             const detail = failure?.message ?? assembler.finish?.error?.message ?? ''
+            if (signal?.aborted === true || finish === 'aborted' || failure?.code === 'ABORTED') {
+              throw new LlmError('wsc nosig request aborted', 'ABORTED', {
+                cause: assembler.finish?.error,
+              })
+            }
             const failed = new Error(`wsc nosig extraction did not finish (${finish}`
               + `${detail ? `: ${String(detail).slice(0, 120)}` : ''})`)
             // Rate-limit/server/timeout outcomes are retryable; auth, request,
@@ -1095,7 +1166,17 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
             .map((block) => block.text)
             .join('')
         },
+      }).catch((error) => {
+        // Conversion happens here so the transaction records a native-shaped
+        // ABORTED failure and the pre-step keeps the history.
+        if (error?.code === 'ABORTED') {
+          throw new LlmError('wsc compaction cancelled; history kept', 'ABORTED', { cause: error })
+        }
+        throw error
       })
+      if (signal?.aborted === true) {
+        throw new LlmError('wsc compaction cancelled; history kept', 'ABORTED')
+      }
       telemetry.segments = extraction.segments
       telemetry.accepted = extraction.accepted
       telemetry.rejected = extraction.rejected
@@ -1128,9 +1209,10 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
       }
     }
 
-    // The passage is the checkpoint: control quotes, the ranked ledger, the
-    // engine work state, mechanical checks, the value ledger and the discovery
-    // index, in that order. The model never sees source bytes it did not ask for.
+    // The passage is the checkpoint: control quotes, the engine work state,
+    // the working set, the ranked ledger, mechanical checks, the value ledger
+    // and the discovery index, in that order. The model never sees source bytes
+    // it did not ask for.
     // Values accumulate across regions: a constant read in round 3 is still
     // addressable after the fifth compaction, as the reference's event-wide
     // ledger is. The journal assigns each value one key at first sight.
@@ -1148,15 +1230,18 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
     const ledgerEntries = denoise === null
       ? journal.entries()
       : pruneQuotedRequirements(denoise.entries, allControls)
-    // Long sessions add one quoted request per round. The cap keeps the newest
-    // verbatim and discloses the cut; 0 keeps the reference's unbounded list.
-    const windowed = windowControl(allControls, settings.controlMaxBytes ?? 0)
-    const control = windowed.texts
     const commandMode = settings.controlMode === 'command-state'
-    // Command state is a presentation reduction: the status projection still
-    // sees every request, so a completed command can drop its quote without
-    // losing the requirement it produced.
-    const stateControls = commandMode ? allControls : control
+    // The projection sees every request; only the quoted presentation is
+    // windowed. Otherwise the control cap would silently erase older
+    // requirements from the work state too.
+    const stateControls = allControls
+    const scoped = settings.ledgerScope === true
+      ? scopeLedger(ledgerEntries, {
+        controls: allControls,
+        scopeSeq: controlEntriesNow.at(-1)?.seq ?? 0,
+      })
+      : { active: ledgerEntries, archived: [] }
+    const ledgerForPassage = scoped.active
     const mechanical = receiptsFromRows(rows)
     // The durable form cites session seqs; the region-position form feeds the
     // state projection, which matches within this region only.
@@ -1172,6 +1257,8 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
     const projected = engineState(journal.entries(), rows, mechanical, {
       controls: settings.stateFromControls === false ? [] : stateControls,
       promoteUnmatched: settings.stateFromControls !== false,
+      promoteLatest: settings.promoteLatestRequest !== false,
+      synthesizeControls: settings.requirementTargets === true,
       isSynthetic: (message) => {
         const source = message?.source
         return source !== undefined && source !== null && isCompactCheckpointSource(source)
@@ -1199,7 +1286,32 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
           doneLines: settings.commandDoneLines,
         })
       : ''
-    const storedState = asCheckpointState(workState)
+    // A model-written next row is admitted only when it can be attributed to a
+    // user message the extractor actually saw and at least one row serves the
+    // newest user request; otherwise the deterministic promotion stands.
+    const nextState = applyModelNext(workState, extraction?.next, userCount, settings.modelNext)
+    const storedState = asCheckpointState(settings.openCategories === true
+      ? categorizeState(nextState, {
+        receipts: mechanical,
+        gaps,
+        error: errorContextOf(rows),
+      })
+      : nextState)
+    // Control quotes are mandatory, so they are admitted only after the state
+    // block and a ledger floor have their bytes. A configured cap is itself
+    // bounded by what the passage budget leaves over.
+    const stateBlock = renderCheckpointState(storedState)
+    const stateReserve = byteLength(stateBlock)
+    const ledgerReserve = settings.ledgerFloor === false
+      ? 0
+      : Math.min(settings.ledgerCapBytes ?? 0, 4000)
+    const controlBudget = (settings.controlMaxBytes ?? 0) > 0
+      ? Math.max(1, Math.min(settings.controlMaxBytes, budget - stateReserve - ledgerReserve))
+      : 0
+    const windowed = windowControl(allControls, controlBudget, {
+      itemMaxBytes: settings.controlItemMaxBytes ?? 0,
+    })
+    const control = windowed.texts
     const shownSeqs = new Set([...index.map((row) => row.seq), ...values.map((row) => row.seq)])
     const dropped = Math.max(0, indexSourceCount(rows) - shownSeqs.size)
     // Optional file-state block: the reference leaves bodies to the index, but
@@ -1214,7 +1326,8 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
         .filter((text) => text !== '')
         .join('\n\n')
       const build = (configured.version ?? 1) >= 2 ? buildWorkingSetV2 : buildWorkingSet
-      const items = build(messages, seed === '' ? configured : { ...configured, seed })
+      const options = { ...configured, docStructure: settings.docStructure === true }
+      const items = build(messages, seed === '' ? options : { ...options, seed })
       if (items.length > 0) workingSetBlock = `## Working set\n${items.join('\n')}`
     }
     // Coverage counts only recorded edits: a request still inside the current,
@@ -1225,22 +1338,40 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
           control.map((text) => ({ text, seq: controlEntriesNow.find((entry) => entry.text === text)?.seq ?? null })),
           journal.receipts))
       : ''
+    const progressBlock = settings.progressBoard === true
+      ? renderProgress(progressRows({
+        planTexts: planTextsOf(rows),
+        receipts: mechanical,
+        state: workState,
+      }))
+      : ''
     const passage = renderPassage({
       control: commandMode ? [] : control,
       commandState: commandBlock,
       board: commandMode ? '' : board,
       controlOmitted: commandMode ? 0 : windowed.omitted,
+      // Keep requirement numbers stable when quotes are cut, so a state line
+      // like "req#30" still names the same request on display.
+      controlNumbers: commandMode ? [] : windowed.indices.map((index) => index + 1),
       latestControl: settings.passageLatest === false
         ? ''
         : ((commandMode ? allControls.at(-1) : control.at(-1)) ?? ''),
-      ledger: ledgerEntries,
+      ledger: ledgerForPassage,
       ledgerMaxBytes: commandMode ? settings.nosigLedgerBytes : (settings.ledgerCapBytes ?? 0),
-      stateBlock: renderCheckpointState(storedState),
+      ledgerFloor: settings.ledgerFloor !== false,
+      archived: scoped.archived.length,
+      archivedTopics: settings.omittedTopics === true
+        ? omittedTopicCounts(ledgerEntries, scoped.active)
+        : null,
+      stateBlock,
+      progress: progressBlock,
       workingSet: workingSetBlock,
       numbered: denoise !== null,
       bullets: denoise !== null,
       superseded: denoise?.superseded ?? 0,
       errorPin: denoise === null ? '' : errorPinOf(rows),
+      omittedTopics: settings.omittedTopics === true,
+      checkSummary: settings.checkSummary === true,
       recent: settings.passageRecent === false ? '' : recentChanges(mechanical),
       receipts,
       index,
@@ -1271,6 +1402,7 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
     if (byteLength(text) >= sourceBytes * 0.85) throw new Error('wsc: checkpoint_not_smaller')
     this.#recordTelemetry(agent, {
       nosig: telemetry,
+      control: telemetry.control,
       stateSnapshot: storedState,
       strategy: 'nosig',
       throughSeq: rows.at(-1)?.seq ?? null,
@@ -1282,11 +1414,35 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
         `${telemetry.converted} ref-converted, ` +
         `${telemetry.gaps} gaps, ${telemetry.retried ?? 0} retries (${telemetry.mode})`,
     )
+    writeStatus(agent.session.id, {
+      phase: 'prepared',
+      fromTokens: selectedRange.getStore()?.tokens,
+      toTokens: summaryTokens(this.ctx.tokenMeter, [{ type: 'text', text }]),
+      segmentsDone: statusProgress.total > 0 ? statusProgress.total : statusProgress.done,
+      segmentsTotal: statusProgress.total > 0 ? statusProgress.total : null,
+      accepted: telemetry.accepted,
+      gaps: telemetry.gaps,
+      retried: telemetry.retried ?? 0,
+    })
     return {
       summary: [{ type: 'text', text }],
       state: storedState,
       provider: typeof provider === 'string' && provider !== '' ? provider : 'wsc',
       model: typeof model === 'string' && model !== '' ? model : 'nosig',
+      // The native event carries one auxiliary-call usage; for nosig that is the
+      // whole extraction pass, so cost audits read it natively.
+      ...(extractionUsage.calls === 0
+        ? {}
+        : {
+            usage: {
+              inputTokens: extractionUsage.inputTokens,
+              outputTokens: extractionUsage.outputTokens,
+              cacheReadTokens: extractionUsage.cacheReadTokens,
+            },
+          }),
+      // The ready record below is digest-matched to this summary, so it can
+      // carry the extraction stats past a process restart or a replayed event.
+      wsc: { telemetry: { nosig: telemetry, control: telemetry.control } },
     }
   }
 
@@ -1773,6 +1929,25 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
     })
 
     const compact = () => this.compactRegion(range.start, range.end, agent, signal)
+    // The one-line chat status starts before the first model call: the pause is
+    // what makes a healthy compaction look like a hung model.
+    writeStatus(session.id, {
+      phase: 'running',
+      fromTokens: range.tokens,
+      manual: requested,
+      action: timing.action,
+      segmentsDone: 0,
+      segmentsTotal: null,
+      accepted: 0,
+      retried: 0,
+      gaps: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      calls: 0,
+      toTokens: null,
+      message: '',
+      startedAt: new Date().toISOString(),
+    })
     // The range is carried through the async compaction so the checkpoint can
     // address region rows by their durable seq (value keys, verification).
     let result
@@ -1785,7 +1960,13 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
       // A cancelled compaction is the caller's decision, not a provider
       // failure, so it must not pause the next legitimate attempt.
       const message = error instanceof Error ? error.message : String(error)
-      if (signal?.aborted !== true && !/abort|cancel/i.test(message)) {
+      const cancelled = signal?.aborted === true || error?.code === 'ABORTED'
+        || /abort|cancel/i.test(message)
+      writeStatus(session.id, {
+        phase: cancelled ? 'cancelled' : 'declined',
+        message: message.slice(0, 160),
+      })
+      if (!cancelled) {
         this.cooldown.block(session, DECLINE_COOLDOWN_MS)
         this.ctx.logger.info(
           `wsc compaction declined; automatic retries paused ${DECLINE_COOLDOWN_MS / 1000}s`,
@@ -1794,6 +1975,12 @@ export default class WscCompactionEngine extends BasicCompactionEngine {
       throw error
     }
     this.cooldown.clear(session)
+    writeStatus(session.id, {
+      phase: 'done',
+      message: '',
+      fromTokens: Number.isFinite(result.shadowedTokenCount) ? result.shadowedTokenCount : range.tokens,
+      toTokens: summaryTokens(this.ctx.tokenMeter, result.summary),
+    })
     this.ctx.logger.info(
       `wsc compaction (${timing.action}): shadowed ${result.shadowedSeqs.length} surface nodes, ` +
         `~${result.shadowedTokenCount} tokens (reclaim ~${admission.reclaimTokens}, ${admission.reason})`,

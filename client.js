@@ -26,6 +26,10 @@ window.__ModuleLoader__.load({
         force: 'Forced compaction',
         minReclaim: 'Minimum reclaim (%)',
         ledgerCap: 'Ledger byte cap (0 = unlimited)',
+        controlCap: 'Control quote cap (bytes, 0 = unlimited)',
+        controlItemMax: 'Older request cap (bytes, 0 = off; newest always kept)',
+        ledgerFloor: 'Keep at least one ledger entry under the cap',
+        promoteLatest: 'Name the latest request as next when nothing matched',
         ledgerDenoise: 'Fold superseded ledger entries',
         evidenceRows: 'Evidence index rows (0 = off)',
         latest: 'Pin the latest request',
@@ -49,6 +53,21 @@ window.__ModuleLoader__.load({
         unavailable: 'This profile does not serve the WSC configuration.',
         saved: 'Saved',
         failed: 'Not saved',
+        statusRunning: 'WSC compacting',
+        statusPrepared: 'WSC finalizing',
+        statusDone: 'WSC compacted',
+        statusDeclined: 'WSC skipped (history kept)',
+        statusCancelled: 'WSC cancelled (history kept)',
+        statusSeg: 'seg',
+        statusEntries: 'entries',
+        statusRetry: 'retry',
+        statusWaiting: 'waiting for the model',
+        statusDetails: 'Details',
+        statusPhase: 'Phase',
+        statusUsage: 'Tokens',
+        statusOutput: 'Output',
+        statusElapsed: 'Elapsed',
+        statusUpdated: 'Updated',
       },
       zh: {
         nav: '上下文压缩',
@@ -68,6 +87,10 @@ window.__ModuleLoader__.load({
         force: '强制压缩阈值',
         minReclaim: '最小回收比例（%）',
         ledgerCap: '账本字节上限（0 = 不限）',
+        controlCap: '逐字需求上限（字节，0 = 不限）',
+        controlItemMax: '旧单条请求上限（字节，0 = 关闭；最新一条总是完整保留）',
+        ledgerFloor: '达到上限时至少保留一条账本',
+        promoteLatest: '无可匹配工作时把最新请求写进 next',
         ledgerDenoise: '折叠账本旧版本',
         evidenceRows: '证据索引行数（0 = 关闭）',
         latest: '置顶最新请求',
@@ -91,6 +114,21 @@ window.__ModuleLoader__.load({
         unavailable: '当前 profile 没有提供 WSC 配置。',
         saved: '已保存',
         failed: '未保存',
+        statusRunning: 'WSC 压缩中',
+        statusPrepared: 'WSC 收尾中',
+        statusDone: 'WSC 压缩完成',
+        statusDeclined: 'WSC 未执行（历史保留）',
+        statusCancelled: 'WSC 已取消（历史保留）',
+        statusSeg: '段',
+        statusEntries: '条',
+        statusRetry: '重试',
+        statusWaiting: '等待模型返回',
+        statusDetails: '详情',
+        statusPhase: '阶段',
+        statusUsage: 'Token',
+        statusOutput: '输出',
+        statusElapsed: '已用',
+        statusUpdated: '更新于',
       },
     }
 
@@ -259,6 +297,10 @@ window.__ModuleLoader__.load({
 
         h('h3', { style: styles.section }, t('secCheckpoint')),
         h(Row, { label: t('ledgerCap') }, number('ledgerCapBytes', 0, 65536, 1)),
+        h(Row, { label: t('controlCap') }, number('controlMaxBytes', 0, 65536, 1)),
+        h(Row, { label: t('controlItemMax') }, number('controlItemMaxBytes', 0, 65536, 1)),
+        h(Row, { label: t('ledgerFloor') }, check('ledgerFloor')),
+        h(Row, { label: t('promoteLatest') }, check('promoteLatestRequest')),
         h(Row, { label: t('ledgerDenoise') }, check('ledgerDenoise')),
         h(Row, { label: t('evidenceRows') }, number('evidenceIndexRows', 0, 20, 1)),
         h(Row, { label: t('latest') }, check('passageLatest')),
@@ -280,9 +322,323 @@ window.__ModuleLoader__.load({
       )
     }
 
+    const STATUS_URL = '/plugins/dsh-wsc/status'
+    const STATUS_POLL_MS = 1500
+    const STATUS_HOLD_MS = 12 * 1000
+    const STATUS_STALE_MS = 10 * 60 * 1000
+    // A segment call can legitimately take a minute; only past this point does
+    // the line say the model has not answered yet.
+    const STATUS_STALL_MS = 90 * 1000
+    const statusStyles = {
+      // Same width and centering as the goal bar and the todo panel, so the
+      // left edge lines up with the composer column instead of the window.
+      wrap: {
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'flex-start',
+        gap: 4,
+        boxSizing: 'border-box',
+        width: 'calc(100% - 2 * var(--dsh-composer-side-clearance, 16px)'
+          + ' - 4 * var(--dsh-composer-dock-inset, 8px))',
+        maxWidth: 'calc(var(--dsh-composer-card-max-width, 952px)'
+          + ' - 4 * var(--dsh-composer-dock-inset, 8px))',
+        margin: '0 auto',
+      },
+      button: {
+        display: 'flex',
+        flexDirection: 'column',
+        alignSelf: 'flex-start',
+        maxWidth: '100%',
+        padding: '2px 10px 4px',
+        borderRadius: 999,
+        border: '1px solid var(--dsw-alias-border-l1, rgba(128,128,128,0.3))',
+        background: 'var(--dsw-alias-bg-layer-2)',
+        color: 'var(--dsw-alias-label-secondary)',
+        font: 'inherit',
+        fontSize: 12,
+        lineHeight: '18px',
+        textAlign: 'left',
+        cursor: 'pointer',
+        overflow: 'hidden',
+      },
+      row: { display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 },
+      dot: { width: 6, height: 6, borderRadius: '50%', flex: 'none' },
+      text: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+      chevron: { flex: 'none', opacity: 0.55, fontSize: 10, lineHeight: '12px' },
+      track: {
+        position: 'relative',
+        height: 2,
+        marginTop: 2,
+        borderRadius: 1,
+        overflow: 'hidden',
+        background: 'rgba(128,128,128,0.25)',
+      },
+      fill: {
+        position: 'absolute',
+        top: 0,
+        bottom: 0,
+        left: 0,
+        borderRadius: 1,
+        transition: 'width 300ms ease-out',
+      },
+      sweep: {
+        position: 'absolute',
+        top: 0,
+        bottom: 0,
+        width: '35%',
+        opacity: 0.5,
+        animation: 'wsc-status-sweep 0.9s linear infinite',
+      },
+      panel: {
+        width: '100%',
+        boxSizing: 'border-box',
+        padding: '6px 12px',
+        borderRadius: 'var(--dsw-radius-lg, 12px)',
+        background: 'var(--dsw-specific-menu, var(--dsw-alias-bg-layer-2))',
+        backdropFilter: 'var(--dsw-menu-backdrop-filter, none)',
+        boxShadow: 'var(--dsw-elevation-panel, none)',
+        color: 'var(--dsw-alias-label-secondary)',
+        fontSize: 12,
+        lineHeight: '18px',
+        whiteSpace: 'normal',
+        overflow: 'hidden',
+      },
+      panelRow: { display: 'flex', justifyContent: 'space-between', gap: 12 },
+      panelKey: { opacity: 0.65, flex: 'none' },
+      panelValue: { textAlign: 'right', wordBreak: 'break-word' },
+      panelMessage: { marginTop: 4, wordBreak: 'break-word' },
+    }
+
+    const formatTokens = (value) => {
+      if (!Number.isFinite(value) || value < 0) return undefined
+      if (value < 1000) return String(Math.round(value))
+      const thousands = value / 1000
+      return `${thousands >= 100 ? thousands.toFixed(0) : thousands.toFixed(1)}k`
+    }
+
+    function StatusLine(props) {
+      const sessionId = props.sessionId
+      const t = props.t
+      const [status, setStatus] = React.useState(null)
+      const [expanded, setExpanded] = React.useState(false)
+      const [now, setNow] = React.useState(() => Date.now())
+      const [flash, setFlash] = React.useState(false)
+      const lastDone = React.useRef(null)
+      const shownTokens = React.useRef(0)
+      const realTokens = React.useRef(0)
+      const realTokensAt = React.useRef(0)
+      const live = status?.phase === 'running' || status?.phase === 'prepared'
+
+      // The poll is slow enough that a long segment looks frozen; a ticker keeps
+      // elapsed time moving, and the expanded token counter smoother.
+      React.useEffect(() => {
+        if (!live) return undefined
+        const timer = setInterval(() => setNow(Date.now()), expanded ? 250 : 1000)
+        return () => clearInterval(timer)
+      }, [live, expanded])
+
+      React.useEffect(() => {
+        const done = status?.segmentsDone
+        if (!live || !Number.isInteger(done)) return undefined
+        const previous = lastDone.current
+        lastDone.current = done
+        if (previous !== null && done > previous) {
+          setFlash(true)
+          const timer = setTimeout(() => setFlash(false), 300)
+          return () => clearTimeout(timer)
+        }
+        return undefined
+      }, [live, status?.segmentsDone])
+
+      React.useEffect(() => {
+        if (typeof sessionId !== 'string' || sessionId === '') return undefined
+        let stopped = false
+        let timer
+        const load = async () => {
+          try {
+            const response = await fetch(
+              `${STATUS_URL}?sessionId=${encodeURIComponent(sessionId)}`,
+              { cache: 'no-store' },
+            )
+            if (!response.ok) return
+            const body = await response.json()
+            if (!stopped) setStatus(body?.status ?? null)
+          } catch {
+            // A host without the status route simply renders no line.
+          }
+        }
+        const loop = async () => {
+          await load()
+          if (!stopped) timer = setTimeout(loop, STATUS_POLL_MS)
+        }
+        loop()
+        return () => {
+          stopped = true
+          clearTimeout(timer)
+        }
+      }, [sessionId])
+
+      if (status === null || status.sessionId !== sessionId) return null
+      const at = Date.parse(status.at ?? '')
+      const age = Number.isFinite(at) ? Math.max(0, now - at) : 0
+      if (!live && age > STATUS_HOLD_MS) return null
+      if (live && age > STATUS_STALE_MS) return null
+
+      const label = {
+        running: t('statusRunning'),
+        prepared: t('statusPrepared'),
+        done: t('statusDone'),
+        declined: t('statusDeclined'),
+        cancelled: t('statusCancelled'),
+      }[status.phase]
+      if (label === undefined) return null
+
+      const stalled = live && age > STATUS_STALL_MS
+      const seconds = Math.floor(age / 1000)
+      const from = formatTokens(status.fromTokens)
+      const to = formatTokens(status.toTokens)
+      const total = Number.isInteger(status.segmentsTotal) && status.segmentsTotal > 0
+        ? status.segmentsTotal
+        : 0
+      const done = Number.isInteger(status.segmentsDone) ? status.segmentsDone : 0
+      const percent = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0
+
+      // Cumulative output tokens are written once per finished segment. Between
+      // segments the counter creeps forward at a steady pace so it shows work
+      // in progress instead of freezing, and resyncs to the exact value when
+      // the next segment lands. The creep is capped at roughly one segment.
+      const realOutput = Number.isInteger(status.outputTokens) ? status.outputTokens : undefined
+      let shownOutput = realOutput
+      if (realOutput !== undefined) {
+        if (realOutput < realTokens.current) {
+          realTokens.current = realOutput
+          realTokensAt.current = now
+          shownTokens.current = realOutput
+        } else if (realOutput > realTokens.current) {
+          realTokens.current = realOutput
+          realTokensAt.current = now
+        }
+        const creep = live && total > 0 && done < total
+          ? Math.min(2500, Math.max(0, (now - realTokensAt.current) / 1000) * 90)
+          : 0
+        shownTokens.current = Math.max(shownTokens.current, realOutput + creep)
+        shownOutput = Math.floor(shownTokens.current)
+      }
+      const count = (value) => Math.floor(value).toLocaleString('en-US')
+
+      const parts = [label]
+      if (from !== undefined && live) parts.push(`${from} → …`)
+      else if (from !== undefined && to !== undefined) {
+        parts.push(`${from} → ${to}`)
+        if (status.toTokens < status.fromTokens) {
+          parts.push(`-${Math.round((1 - status.toTokens / status.fromTokens) * 100)}%`)
+        }
+      }
+      if (live && total > 0) parts.push(`${t('statusSeg')} ${done}/${total}`)
+      if (live && Number.isInteger(status.retried) && status.retried > 0) {
+        parts.push(`${t('statusRetry')} ${status.retried}`)
+      }
+      if (live) parts.push(`${seconds}s`)
+      if (stalled) parts.push(t('statusWaiting'))
+      if (!live && Number.isInteger(status.accepted)) {
+        parts.push(`${status.accepted} ${t('statusEntries')}`)
+      }
+      if (!live && status.phase !== 'done'
+          && typeof status.message === 'string' && status.message !== '') {
+        parts.push(status.message.length > 60 ? `${status.message.slice(0, 60)}…` : status.message)
+      }
+
+      const dotColor = live ? '#d9822b' : (status.phase === 'done' ? '#2f9e5f' : '#9a9a9a')
+      const track = live || status.phase === 'done'
+        ? h('div', { style: statusStyles.track },
+            h('div', {
+              style: {
+                ...statusStyles.fill,
+                width: `${status.phase === 'done' ? 100 : percent}%`,
+                background: dotColor,
+              },
+            }),
+            live
+              ? h('div', {
+                  style: {
+                    ...statusStyles.sweep,
+                    background: `linear-gradient(90deg, transparent, ${dotColor}, transparent)`,
+                    animationDuration: stalled ? '1.8s' : '0.9s',
+                  },
+                })
+              : null,
+          )
+        : null
+
+      const detail = (key, value) => value === undefined
+        ? null
+        : h('div', { style: statusStyles.panelRow },
+            h('span', { style: statusStyles.panelKey }, key),
+            h('span', { style: statusStyles.panelValue }, value))
+      const details = expanded
+        ? h('div', { style: statusStyles.panel },
+            detail(t('statusPhase'), label),
+            detail(t('statusSeg'), total > 0 ? `${done}/${total}` : undefined),
+            detail(t('statusUsage'), from === undefined
+              ? undefined
+              : `${from} → ${to ?? '…'}`),
+            detail(t('statusOutput'), shownOutput === undefined
+              ? undefined
+              : `${live ? '≈ ' : ''}${count(shownOutput)}`),
+            detail(t('statusRetry'), Number.isInteger(status.retried) && status.retried > 0
+              ? String(status.retried)
+              : undefined),
+            detail(t('statusEntries'), !live && Number.isInteger(status.accepted)
+              ? String(status.accepted)
+              : undefined),
+            detail(live ? t('statusElapsed') : t('statusUpdated'), `${seconds}s`),
+            typeof status.message === 'string' && status.message !== ''
+              ? h('div', { style: statusStyles.panelMessage }, status.message)
+              : null,
+          )
+        : null
+
+      // Details open upward, above the capsule, like the todo panel; the dock
+      // grows away from the composer.
+      return h('div', { style: statusStyles.wrap, 'data-wsc-status': status.phase },
+        details,
+        h('button', {
+          type: 'button',
+          style: statusStyles.button,
+          title: parts.join(' · '),
+          'aria-expanded': expanded,
+          'aria-label': `${parts.join(' · ')} (${t('statusDetails')})`,
+          onClick: () => setExpanded((value) => !value),
+        },
+        h('div', { style: statusStyles.row },
+          h('span', {
+            style: {
+              ...statusStyles.dot,
+              background: dotColor,
+              ...(live ? { animation: 'wsc-status-pulse 1.2s ease-in-out infinite' } : {}),
+            },
+          }),
+          h('span', {
+            style: { ...statusStyles.text, ...(flash ? { color: dotColor } : {}) },
+          }, parts.join(' · ')),
+          h('span', { style: statusStyles.chevron }, expanded ? '▾' : '▸'),
+        ),
+        track),
+        details)
+    }
+
+    // The package is loaded through both its bundle entry and its engine
+    // insert; each instance runs this client, which rendered the status line
+    // and the settings page twice. One process registers once.
+    const REGISTERED = '__dshWscClientRegistered'
+
     return {
       inject: ['slots', 'locale', 'configForms'],
       apply(ctx) {
+        if (typeof window !== 'undefined') {
+          if (window[REGISTERED] === true) return
+          window[REGISTERED] = true
+        }
         ctx.effect(() => ctx.locale.register(NS, DICT), 'wsc: dictionaries')
         const t = ctx.locale.bind(NS)
 
@@ -305,6 +661,37 @@ window.__ModuleLoader__.load({
               },
             },
             Page,
+          ),
+        )
+
+        // One line above the composer: compaction is a long pause, and without
+        // a visible phase it looks like the model stopped responding. The dock
+        // orders entries ascending; 0 puts the line on the same level as the
+        // todo panel, above the goal banner (10).
+        ctx.effect(() => {
+          if (typeof document === 'undefined') return () => {}
+          const id = 'wsc-status-keyframes'
+          if (document.getElementById(id) !== null) return () => {}
+          const tag = document.createElement('style')
+          tag.id = id
+          tag.textContent = '@keyframes wsc-status-pulse{0%,100%{opacity:.35}50%{opacity:1}}'
+            + '@keyframes wsc-status-sweep{0%{transform:translateX(-110%)}'
+            + '100%{transform:translateX(320%)}}'
+            + '@media (prefers-reduced-motion: reduce){[data-wsc-status] *{animation:none!important}}'
+          document.head.appendChild(tag)
+          return () => { try { tag.remove() } catch { /* already gone */ } }
+        }, 'wsc: status keyframes')
+
+        ctx.slots.inject('conversation.input.dock', () =>
+          ctx.slots.register(
+            {
+              name: 'conversation.input.dock',
+              id: 'wsc-status',
+              order: 0,
+              locale: NS,
+              inject: (sessionId) => ({ sessionId, t }),
+            },
+            StatusLine,
           ),
         )
       },

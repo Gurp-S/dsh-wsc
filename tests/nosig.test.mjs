@@ -312,8 +312,8 @@ test('nosig: the instruction carries the configured caps', () => {
 
 test('nosig: delta extraction forbids restating the current ledger', () => {
   const base = extInstruction({ entries: 5, revisions: 3 })
-  assert.doesNotMatch(base, /do not restate an unchanged relation/)
-  assert.match(extInstruction({ entries: 5, revisions: 3, delta: true }), /do not restate an unchanged relation/)
+  assert.doesNotMatch(base, /Do not restate an unchanged relation/)
+  assert.match(extInstruction({ entries: 5, revisions: 3, delta: true }), /Do not restate an unchanged relation/)
 })
 
 test('nosig: one request extracts the whole region and retries a non-JSON reply', async () => {
@@ -502,7 +502,7 @@ test('nosig: a segment is retried three times before it becomes a gap', async ()
   assert.equal(result.failed, 1)
 })
 
-test('nosig: pass two retries a failed segment after the later segments are done', async () => {
+test('nosig: a failed segment is retried in place before the later segments run', async () => {
   const { runExtraction } = await import('../lib/nosig.js')
   const journal = new LedgerJournal(null)
   const segments = [
@@ -530,7 +530,8 @@ test('nosig: pass two retries a failed segment after the later segments are done
     },
   })
   assert.equal(calls.length, 4)
-  assert.ok(calls[3].includes('BBB-2222'), 'the retry runs after the later segments')
+  assert.ok(calls[2].includes('BBB-2222'), 'the retry runs before the next segment')
+  assert.ok(calls[3].includes('CCC-3333'), 'the pass continues after the retry')
   assert.equal(result.retried, 1)
   assert.equal(result.gaps.length, 0)
   assert.equal(result.accepted, 3)
@@ -539,6 +540,36 @@ test('nosig: pass two retries a failed segment after the later segments are done
     ['AAA-1111', 'BBB-2222', 'CCC-3333'],
   )
   assert.deepEqual(journal.entries().map((entry) => entry.segment).sort(), ['n1', 'n2', 'n3'])
+})
+
+test('nosig: per-segment progress is reported for the UI status line', async () => {
+  const { runExtraction, runExtractionOnce } = await import('../lib/nosig.js')
+  const segments = [
+    [message('user', 'append AAA-1111 to docs/a.md')],
+    [message('user', 'append BBB-2222 to docs/b.md')],
+  ]
+  const progress = []
+  const result = await runExtraction(segments, new LedgerJournal(null), {
+    mode: 'literal',
+    wait: async () => {},
+    onProgress: (event) => progress.push({ done: event.done, total: event.total }),
+    callModel: async (numbered) => {
+      const anchor = numbered.text.includes('AAA-1111') ? 'AAA-1111' : 'BBB-2222'
+      const path = anchor === 'AAA-1111' ? 'docs/a.md' : 'docs/b.md'
+      return JSON.stringify({
+        entries: [{ kind: 'decision', text: `append ${anchor} to ${path}`, cites: [1] }],
+      })
+    },
+  })
+  assert.equal(result.accepted, 2)
+  assert.deepEqual(progress, [{ done: 1, total: 2 }, { done: 2, total: 2 }])
+
+  const single = []
+  await runExtractionOnce([message('user', 'note')], new LedgerJournal(null), {
+    onProgress: (event) => single.push({ done: event.done, total: event.total }),
+    callModel: async () => JSON.stringify({ entries: [], revise: [] }),
+  })
+  assert.deepEqual(single, [{ done: 1, total: 1 }])
 })
 
 test('nosig: no usable segment is reported for the engine to decline', async () => {
@@ -577,6 +608,21 @@ test('nosig: a context-length failure is permanent, not retried', async () => {
   assert.match(result.gaps[0], /context length/)
 })
 
+test('nosig: an exhausted quota is permanent, not retried', async () => {
+  const { runExtractionOnce } = await import('../lib/nosig.js')
+  const calls = []
+  const result = await runExtractionOnce([message('user', 'note')], new LedgerJournal(null), {
+    wait: async () => { throw new Error('should not wait') },
+    callModel: async () => {
+      calls.push(1)
+      throw new Error('insufficient quota: account balance exhausted')
+    },
+  })
+  assert.equal(calls.length, 1)
+  assert.equal(result.retried, 0)
+  assert.equal(result.failed, 1)
+})
+
 test('nosig: a content-filter failure is permanent, not retried', async () => {
   const { runExtractionOnce } = await import('../lib/nosig.js')
   const calls = []
@@ -592,19 +638,55 @@ test('nosig: a content-filter failure is permanent, not retried', async () => {
   assert.equal(result.failed, 1)
 })
 
-test('nosig: an aborted request is not retried', async () => {
+test('nosig: an aborted request fails the whole extraction, not a segment', async () => {
   const { runExtractionOnce } = await import('../lib/nosig.js')
   const calls = []
-  const result = await runExtractionOnce([message('user', 'note')], new LedgerJournal(null), {
-    wait: async () => { throw new Error('should not wait') },
-    callModel: async () => {
-      calls.push(1)
-      const error = new Error('wsc nosig request aborted')
-      error.retryable = false
-      throw error
-    },
-  })
+  await assert.rejects(
+    runExtractionOnce([message('user', 'note')], new LedgerJournal(null), {
+      wait: async () => { throw new Error('should not wait') },
+      callModel: async () => {
+        calls.push(1)
+        const error = new Error('wsc nosig request aborted')
+        error.code = 'ABORTED'
+        error.retryable = false
+        throw error
+      },
+    }),
+    (error) => error.code === 'ABORTED' && /cancelled/.test(error.message),
+  )
   assert.equal(calls.length, 1)
-  assert.equal(result.retried, 0)
-  assert.match(result.gaps[0], /aborted/)
+})
+
+test('nosig: cancellation stops the remaining segments and the retry pass', async () => {
+  const { runExtraction } = await import('../lib/nosig.js')
+  const calls = []
+  await assert.rejects(
+    runExtraction(
+      [
+        [message('user', 'append AAA-1111 to docs/a.md')],
+        [message('user', 'append BBB-2222 to docs/b.md')],
+        [message('user', 'append CCC-3333 to docs/c.md')],
+      ],
+      new LedgerJournal(null),
+      {
+        mode: 'literal',
+        wait: async () => {},
+        callModel: async (numbered) => {
+          calls.push(numbered.text)
+          if (numbered.text.includes('BBB-2222')) {
+            const error = new Error('Request was aborted')
+            error.code = 'ABORTED'
+            throw error
+          }
+          const anchor = ['AAA-1111', 'CCC-3333'].find((value) => numbered.text.includes(value))
+          const path = { 'AAA-1111': 'docs/a.md', 'CCC-3333': 'docs/c.md' }[anchor]
+          return JSON.stringify({
+            entries: [{ kind: 'decision', text: `append ${anchor} to ${path}`, cites: [1] }],
+          })
+        },
+      },
+    ),
+    (error) => error.code === 'ABORTED',
+  )
+  assert.equal(calls.length, 2, 'the third segment is never requested after cancellation')
 })
